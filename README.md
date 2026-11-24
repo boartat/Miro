@@ -2,6 +2,8 @@
 
 Mac에서 Windows 게임·프로그램을 실행하는 무료 오픈소스 런처예요. [Whisky](https://github.com/Whisky-App/Whisky)(GPL-3.0)를 포크해서 만들었어요.
 
+![Miro 홈 화면: 최근 플레이, 폴더별 게임, 나머지 게임이 카드로 보여요](docs/screenshots/01-home.png)
+
 ## 다운로드
 
 **[⬇︎ Miro 최신 버전 받기 (Miro.zip)](https://github.com/boartat/Miro/releases/latest/download/Miro.zip)** · [모든 릴리즈](https://github.com/boartat/Miro/releases)
@@ -16,6 +18,28 @@ Mac에서 Windows 게임·프로그램을 실행하는 무료 오픈소스 런�
    - **완료**를 누르고 **시스템 설정 → 개인정보 보호 및 보안**으로 가서 맨 아래 "Miro"의 **그래도 열기**를 눌러요.
    - 또는 터미널에서 `xattr -dr com.apple.quarantine /Applications/Miro.app`을 한 번 실행해요.
 3. 안 되는 게임이 있으면 [이슈](https://github.com/boartat/Miro/issues)로 알려 주세요. 실행 로그(파일 메뉴 → 로그 폴더 열기, ⌘L)를 붙여 주면 큰 도움이 돼요.
+
+## 화면 둘러보기
+
+> 사진 속 게임은 화면 예시용으로 만든 가짜 데모 게임이에요.
+
+**게임 페이지** — 플레이 버튼 옆에서 효율·기본·성능 모드를 고르고, 아래에서 Retina·전체 화면·FPS 표시를 켜고 꺼요. 오른쪽 게임 정보에는 어떤 엔진으로 실행되는지 보여요.
+
+![게임 페이지](docs/screenshots/02-game.png)
+
+**호환성 검사** — 게임 실행 파일이 불러오는 DLL을 읽어서, 필요한 라이브러리가 준비됐는지 보여 줘요. 없으면 여기서 바로 설치해요.
+
+![호환성 검사](docs/screenshots/03-compat.png)
+
+**게임 설정** — 이름, 실행 인수, 언어, 호환 엔진(자동 / 클래식 / 최신), 커버 이미지를 바꿔요.
+
+![게임 설정](docs/screenshots/04-game-settings.png)
+
+**설정** — 엔진 2개를 나란히 관리하고, 게임에 자주 필요한 라이브러리를 한 번에 설치해요.
+
+| 호환 레이어 · 엔진 | 라이브러리 |
+| --- | --- |
+| ![엔진 설정](docs/screenshots/05-engines.png) | ![라이브러리 설정](docs/screenshots/06-libraries.png) |
 
 ## 기능
 

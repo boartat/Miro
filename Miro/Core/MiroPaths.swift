@@ -10,7 +10,16 @@ import WhiskyKit
 enum MiroPaths {
     /// ~/Library/Application Support/<bundle id>
     static let support = WhiskyWineInstaller.applicationFolder
-    static let libraryFolder = support.appending(path: "Library")
+    /// The game list, covers and icons. `-MiroLibraryFolder <path>` on the command line swaps in another
+    /// library (demo screenshots, testing) without touching the real one.
+    static let libraryFolder: URL = {
+        // Command-line arguments only, so a stray saved preference can never redirect the library
+        let arguments = UserDefaults.standard.volatileDomain(forName: UserDefaults.argumentDomain)
+        if let custom = arguments["MiroLibraryFolder"] as? String, !custom.isEmpty {
+            return URL(filePath: custom, directoryHint: .isDirectory)
+        }
+        return support.appending(path: "Library")
+    }()
     static let libraryFile = libraryFolder.appending(path: "games.json")
     static let covers = libraryFolder.appending(path: "Covers")
     static let icons = libraryFolder.appending(path: "Icons")
