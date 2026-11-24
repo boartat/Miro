@@ -1,0 +1,47 @@
+name: 게임이 안 돼요
+description: 실행되지 않거나 문제가 있는 게임·프로그램을 알려 주세요.
+labels: ["게임 호환성"]
+body:
+  - type: input
+    id: game
+    attributes:
+      label: 게임 이름
+      description: 스팀 페이지나 배포처 링크가 있으면 같이 적어 주세요.
+    validations:
+      required: true
+  - type: textarea
+    id: what
+    attributes:
+      label: 어떤 문제인가요?
+      description: 예) 검은 화면에서 멈춰요, 클릭이 안 돼요, 바로 꺼져요
+    validations:
+      required: true
+  - type: dropdown
+    id: engine
+    attributes:
+      label: 호환 엔진 (게임 설정 → 호환 엔진)
+      options:
+        - 자동
+        - 클래식 (Wine 7.7 + D3DMetal)
+        - 최신 (Wine 11 + DXVK)
+        - 모르겠어요
+    validations:
+      required: true
+  - type: input
+    id: mac
+    attributes:
+      label: Mac 모델과 macOS 버전
+      placeholder: 예) MacBook Pro M3, macOS 26.1
+    validations:
+      required: true
+  - type: input
+    id: version
+    attributes:
+      label: Miro 버전 (설정 → 일반 → 정보)
+    validations:
+      required: true
+  - type: textarea
+    id: log
+    attributes:
+      label: 실행 로그
+      description: 파일 메뉴 → 로그 폴더 열기(⌘L)에서 가장 최근 로그 파일을 끌어다 놓아 주세요. 로그에 Mac 사용자 이름이 들어 있을 수 있으니 올리기 전에 확인해 주세요.
