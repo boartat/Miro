@@ -63,7 +63,10 @@ Mac에서 Windows 게임·프로그램을 실행하는 무료 오픈소스 런�
 - **Windows 11 유지**: .NET 설치 등이 Windows 버전을 7/XP로 바꿔 놓으면, 설치가 끝날 때와 앱을 열 때 자동으로 Windows 11로 되돌려요.
 - **Windows 11 호환 레이어 (엔진 2개)**: 가상 C: 드라이브는 Windows 11로 설정돼요.
   - **클래식**: Gcenx가 빌드한 Apple Game Porting Toolkit 3.0 (Wine 7.7 + D3DMetal, DirectX 11/12 → Metal). 가장 빠르고 기본값이에요.
-  - **최신**: WineHQ 11.21 Staging (Gcenx의 공식 macOS 빌드) + DXVK-macOS 1.10.3 (DirectX 9~11 → Vulkan → MoltenVK → Metal). Wine 7.7에 없는 Windows 기능이 필요한 게임용이에요(예: Unity 6.3의 `IsMouseInPointerEnabled`). 설정 → 호환 레이어에서 설치(약 235MB, SHA-256 확인).
+  - **최신**: WineHQ 11.21 Staging (Gcenx의 공식 macOS 빌드). Wine 7.7에 없는 Windows 기능이 필요한 게임용이에요(예: Unity 6.3의 `IsMouseInPointerEnabled`). 설정 → 호환 레이어에서 설치(약 255MB, SHA-256 확인). 그래픽은 두 가지예요.
+    - **DXMT v0.80**: DirectX 10/11을 Metal로 바로 그려요. 같은 화면을 60 FPS로 그릴 때 GPU를 DXVK의 3분의 1 정도만 써요. 공식 Wine에서는 DXMT가 동작하지 않아서, Miro가 Wine Mac 드라이버(`winemac.so`)를 고쳐서 넣어요([Engine/winemac-dxmt](Engine/winemac-dxmt)).
+    - **DXVK-macOS 1.10.3**: DirectX 9~11 → Vulkan → MoltenVK → Metal.
+    - 게임 설정 → 그래픽에서 자동(DXMT 우선) / DXMT / DXVK를 골라요. DXMT로 실행하다 실패하면 문제 해결 창에서 바로 DXVK로 다시 실행할 수 있어요. 예전에 최신 엔진을 설치했다면 설정 → 호환 레이어의 "DXMT 추가"(약 18MB)로 넣어요.
   - 두 엔진은 C: 드라이브를 따로 써요. 최신 엔진의 C: 드라이브는 클래식 C: 드라이브의 APFS 복제본(추가 용량 거의 없음)이고 `C:\Games`는 같은 폴더를 가리켜요.
   - **게임별 엔진**: 게임 설정 → 호환 엔진에서 자동 / 클래식 / 최신. 자동은 클래식으로 실행하다가 로그에 `unimplemented function …`이 나오면 최신 엔진으로 바꿔 바로 다시 실행하고 기억해요. 최신 엔진이 없으면 문제 해결 창에서 설치 후 다시 실행해요.
   - **안전장치**: Wine이 프로세스를 끝없이 띄우면(예: explorer.exe가 계속 다시 시작) 120개를 넘기 전에 그 엔진의 wineserver를 멈춰서 Mac이 멈추는 걸 막아요.
@@ -92,9 +95,9 @@ xcodebuild -project Miro.xcodeproj -scheme Miro -configuration Release -derivedD
 | --- | --- |
 | 라이브러리·커버·아이콘 | `~/Library/Application Support/app.miro.Miro/Library` |
 | Wine 런타임(클래식), winetricks | `~/Library/Application Support/app.miro.Miro/Libraries` |
-| 최신 엔진 (Wine 11 + DXVK) | `…/Libraries/Engines/wine-11.21` (경로를 짧게 유지해야 해요: Wine 글꼴 로더가 260자 버퍼를 써요) |
+| 최신 엔진 (Wine 11 + DXMT / DXVK) | `…/Libraries/Engines/wine-11.21` (경로를 짧게 유지해야 해요: Wine 글꼴 로더가 260자 버퍼를 써요). DXMT가 바꾼 원래 파일은 `miro/original` |
 | Windows 11 환경 (C: 드라이브) | `~/Library/Containers/app.miro.Miro/Bottles/Miro` (클래식), `…/Bottles/Miro-W11` (최신) |
-| DXVK 셰이더 캐시 | `~/Library/Application Support/app.miro.Miro/ShaderCache` |
+| 셰이더 캐시 | `~/Library/Application Support/app.miro.Miro/ShaderCache` (DXVK), `…/ShaderCache/dxmt` (DXMT) |
 | 폴더째 넣은 게임 | `…/Bottles/Miro/drive_c/Games` (= `C:\Games`) |
 | 실행·설치 로그 | `~/Library/Logs/app.miro.Miro` |
 
@@ -110,12 +113,14 @@ xcodebuild -project Miro.xcodeproj -scheme Miro -configuration Release -derivedD
 
 GPL-3.0 이상 — Whisky에서 이어받았어요. [`LICENSE`](LICENSE)를 참고하세요. 어떠한 보증도 없어요.
 
-Miro.app에는 Whisky 코드, SemanticVersion(Apache-2.0), cabextract 1.11(GPL-3.0, 소스는 각 릴리즈에 첨부)이 들어 있어요. Wine·DXVK·D3DMetal 같은 호환 레이어는 앱에 넣지 않고, 처음 실행할 때 원래 배포처에서 내려받아요.
+Miro.app에는 Whisky 코드, SemanticVersion(Apache-2.0), cabextract 1.11(GPL-3.0), DXMT용으로 고친 Wine Mac 드라이버 `winemac.so`(LGPL-2.1)가 들어 있어요. cabextract와 고친 Wine의 소스는 각 릴리즈에 첨부돼요. Wine·DXVK·DXMT·D3DMetal 같은 호환 레이어 본체는 앱에 넣지 않고, 설치할 때 원래 배포처에서 내려받아요.
 
 | 구성 요소 | 라이선스 | 비고 |
 | --- | --- | --- |
 | Wine (클래식·최신) | LGPL-2.1 | 소스: winehq.org, Gcenx/macOS_Wine_builds |
 | DXVK-macOS | zlib | Gcenx/DXVK-macOS |
+| DXMT v0.80 | MIT | 3Shain/dxmt (v0.80까지 MIT) |
+| 고친 winemac.so (최신 엔진) | LGPL-2.1 | 소스: [Engine/winemac-dxmt](Engine/winemac-dxmt), 릴리즈 첨부 |
 | MoltenVK (Wine 빌드에 포함) | Apache-2.0 | |
 | winetricks | LGPL-2.1 | |
 | Apple D3DMetal (Game Porting Toolkit) | Apple 라이선스 | 비상업적 배포만 허용, 수정 금지. 그래서 Miro는 무료로만 배포해요 |

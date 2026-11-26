@@ -53,6 +53,10 @@ struct EngineRow: View {
                     .lineLimit(3)
                     .padding(.leading, 28)
             }
+            if kind == .modern, engines.modernState == .installed {
+                dxmtRow
+                    .padding(.leading, 28)
+            }
         }
         .confirmationDialog("최신 엔진을 삭제할까요?", isPresented: $confirmRemove) {
             Button("삭제", role: .destructive) { engines.uninstallModern() }
@@ -91,6 +95,52 @@ struct EngineRow: View {
                 .controlSize(.small)
                 .tint(Theme.accent)
                 .disabled(!runtime.isReady)
+            }
+        }
+    }
+
+    /// DXMT inside the modern engine: in use, being added, or one click away
+    @ViewBuilder
+    private var dxmtRow: some View {
+        if engines.dxmtReady {
+            Label("DXMT \(ModernEngine.dxmtVersion) 사용 중 · DirectX 10/11을 Metal로 바로 그려요",
+                  systemImage: "bolt.fill")
+                .font(.system(size: 11))
+                .foregroundStyle(Theme.secondaryText)
+        } else if engines.dxmtInstalling {
+            VStack(alignment: .leading, spacing: 3) {
+                ProgressView(value: engines.progress)
+                    .progressViewStyle(.linear)
+                    .tint(Theme.accent)
+                Text(engines.detail)
+                    .font(.system(size: 10.5))
+                    .foregroundStyle(Theme.secondaryText)
+                    .lineLimit(1)
+            }
+        } else {
+            VStack(alignment: .leading, spacing: 4) {
+                HStack(spacing: 8) {
+                    Text("DXMT를 추가하면 DirectX 10/11 게임을 Metal로 바로 그려서 GPU를 덜 써요.")
+                        .font(.system(size: 11))
+                        .foregroundStyle(Theme.secondaryText)
+                        .fixedSize(horizontal: false, vertical: true)
+                    Spacer(minLength: 8)
+                    Button {
+                        Task { await engines.installDXMT() }
+                    } label: {
+                        Text("DXMT 추가 · \(ModernEngine.dxmtDownloadSize)")
+                            .font(.system(size: 11, weight: .semibold))
+                    }
+                    .buttonStyle(.borderedProminent)
+                    .controlSize(.small)
+                    .tint(Theme.accent)
+                }
+                if let error = engines.dxmtError {
+                    Text(error)
+                        .font(.system(size: 10.5))
+                        .foregroundStyle(Theme.stop)
+                        .lineLimit(2)
+                }
             }
         }
     }

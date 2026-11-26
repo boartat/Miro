@@ -123,6 +123,8 @@ struct Game: Codable, Identifiable, Hashable, Sendable {
     var winePreference: WinePreference = .auto
     /// What 자동 learned for this game, e.g. the classic engine lacked a function it calls → modern
     var wineLearned: WineEngineKind?
+    /// How Direct3D 10/11 is drawn on the modern engine (자동 / DXMT / DXVK)
+    var graphicsPreference: GraphicsPreference = .auto
 
     init(name: String, executablePath: String) {
         self.name = name
@@ -158,6 +160,7 @@ struct Game: Codable, Identifiable, Hashable, Sendable {
         showFPS = try container.decodeIfPresent(Bool.self, forKey: .showFPS) ?? false
         winePreference = (try? container.decodeIfPresent(WinePreference.self, forKey: .winePreference)) ?? .auto
         wineLearned = try? container.decodeIfPresent(WineEngineKind.self, forKey: .wineLearned)
+        graphicsPreference = (try? container.decodeIfPresent(GraphicsPreference.self, forKey: .graphicsPreference)) ?? .auto
     }
 
     var executableURL: URL { URL(fileURLWithPath: executablePath) }

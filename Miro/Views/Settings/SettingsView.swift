@@ -53,7 +53,7 @@ private struct GeneralSettings: View {
                 LabeledContent("버전", value: MiroLinks.version)
                 Text("Miro는 Whisky(GPL-3.0)를 포크해 만든 무료 자유 소프트웨어예요. GNU GPL 3.0 이상에 따라 누구나 나누고 고칠 수 있고, "
                      + "어떠한 보증도 없어요. Wine(LGPL-2.1), Apple Game Porting Toolkit(D3DMetal, Apple 라이선스), "
-                     + "DXVK-macOS(zlib), MoltenVK(Apache-2.0), winetricks(LGPL-2.1), cabextract(GPL-3.0)를 사용해요.")
+                     + "DXMT(MIT), DXVK-macOS(zlib), MoltenVK(Apache-2.0), winetricks(LGPL-2.1), cabextract(GPL-3.0)를 사용해요.")
                     .font(.system(size: 11.5))
                     .foregroundStyle(Theme.secondaryText)
                     .fixedSize(horizontal: false, vertical: true)
@@ -100,7 +100,8 @@ private struct RuntimeSettings: View {
                 Text("엔진")
             } footer: {
                 Text("게임마다 '게임 설정 → 호환 엔진'에서 고를 수 있어요. 기본은 자동: 클래식으로 실행하다가 "
-                     + "클래식에 없는 Windows 기능이 필요하면 최신 엔진으로 바꿔요. 두 엔진은 C: 드라이브를 따로 써서 서로 영향을 주지 않아요.")
+                     + "클래식에 없는 Windows 기능이 필요하면 최신 엔진으로 바꿔요. 두 엔진은 C: 드라이브를 따로 써서 서로 영향을 주지 않아요. "
+                     + "최신 엔진의 그래픽(DXMT / DXVK)은 '게임 설정 → 그래픽'에서 골라요.")
                     .font(.system(size: 11))
                     .foregroundStyle(Theme.secondaryText)
             }

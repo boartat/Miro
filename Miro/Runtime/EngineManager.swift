@@ -21,7 +21,13 @@ enum ModernEngine {
     static let dxvkURL = URL(string:
         "https://github.com/Gcenx/DXVK-macOS/releases/download/v1.10.3-20230507/dxvk-macOS-async-v1.10.3-20230507.tar.gz")!
     static let dxvkSHA256 = "f67d99d0a8eeedd7d406b283a3df9f939b5965acb00efcb33d0c6235c195a516"
-    static let downloadSize = "약 235MB"
+    /// DXMT (Direct3D 10/11 → Metal), MIT license up to v0.80
+    static let dxmtVersion = "v0.80"
+    static let dxmtURL = URL(string:
+        "https://github.com/3Shain/dxmt/releases/download/v0.80/dxmt-v0.80-builtin.tar.gz")!
+    static let dxmtSHA256 = "8f260e36b5739e68f3bad613381441385c4dc7b85b78ba8de653d5a6a264529d"
+    static let dxmtDownloadSize = "약 18MB"
+    static let downloadSize = "약 255MB"
 
     /// Keep this path short: Wine's font loader copies `<root>/share/wine/fonts` into a MAX_PATH buffer and
     /// a long root crashes every process at startup (then explorer.exe is restarted in a loop).
@@ -36,6 +42,33 @@ enum ModernEngine {
         root.appending(path: "bin/wine").fileExists && marker.fileExists
             && dxvkFolder.appending(path: "x64/d3d11.dll").fileExists
     }
+
+    // MARK: DXMT
+
+    /// DXMT's builtin DLLs go where Wine looks for its own builtins
+    static let dxmtDLLs = ["d3d10core", "d3d11", "dxgi", "winemetal"]
+    static let dxmtMarker = root.appending(path: "miro/dxmt.json")
+    /// The engine's own files that DXMT replaces, kept so DXMT can be taken out again
+    static let originals = root.appending(path: "miro/original")
+    static let unixFolder = root.appending(path: "lib/wine/x86_64-unix")
+
+    /// Miro's build of this engine's winemac.so: the same Wine 11.21 Staging source plus the `macdrv_functions`
+    /// table DXMT looks for (source and build script: Engine/winemac-dxmt in the repository). Stored as `.so.bin`
+    /// so Xcode copies it as a resource instead of trying to link it.
+    static var bridgedWinemac: URL? {
+        Bundle.main.url(forResource: "winemac-\(wineVersion)-dxmt.so", withExtension: "bin")
+    }
+
+    static var hasDXMT: Bool {
+        dxmtMarker.fileExists && unixFolder.appending(path: "winemetal.so").fileExists
+    }
+}
+
+struct DXMTMarker: Codable {
+    var dxmtVersion: String
+    var dxmtSHA256: String
+    var winemacSHA256: String
+    var installedAt: Date
 }
 
 struct EngineMarker: Codable {
@@ -57,6 +90,10 @@ final class EngineManager: ObservableObject {
     @Published private(set) var progress: Double = 0
     @Published private(set) var detail = ""
     @Published private(set) var modernBottle: Bottle?
+    /// DXMT is installed into the modern engine
+    @Published private(set) var dxmtReady = false
+    @Published private(set) var dxmtInstalling = false
+    @Published private(set) var dxmtError: String?
 
     private init() {
         refresh()
@@ -66,8 +103,17 @@ final class EngineManager: ObservableObject {
         guard modernState != .installing else { return }
         let ready = ModernEngine.isInstalled && WineEngine.modern.hasPrefix
         modernState = ready ? .installed : .notInstalled
+        dxmtReady = ready && ModernEngine.hasDXMT
         if ready, modernBottle == nil {
             modernBottle = Bottle(bottleUrl: MiroPaths.modernBottle, isAvailable: true)
+        }
+    }
+
+    /// How `game` draws Direct3D 10/11 when it runs on the modern engine
+    func graphics(for game: Game) -> GraphicsBackend {
+        switch game.graphicsPreference {
+        case .dxvk: return .dxvk
+        case .dxmt, .auto: return dxmtReady ? .dxmt : .dxvk
         }
     }
 
@@ -100,17 +146,71 @@ final class EngineManager: ObservableObject {
         progress = 0
         do {
             try await installEngineFiles()
+            if !ModernEngine.hasDXMT {
+                // DXMT is an extra: if it can't be installed, DXVK still draws every game
+                do {
+                    try await installDXMTFiles(span: 0.86...0.9)
+                    dxmtError = nil
+                } catch {
+                    dxmtError = error.localizedDescription
+                }
+            }
             detail = "Windows 11 환경 준비 중… (처음 한 번은 1~2분 걸려요)"
             progress = 0.9
             try await prepareBottle()
             progress = 1
             detail = "설치 완료"
             modernState = .installed
+            dxmtReady = ModernEngine.hasDXMT
             modernBottle = Bottle(bottleUrl: MiroPaths.modernBottle, isAvailable: true)
         } catch {
             modernState = .failed(error.localizedDescription)
             detail = error.localizedDescription
         }
+    }
+
+    /// Adds DXMT to a modern engine that was installed before Miro shipped it.
+    func installDXMT() async {
+        guard modernState == .installed, !dxmtInstalling else { return }
+        guard !GameLauncher.shared.runningEngine.values.contains(.modern) else {
+            dxmtError = "최신 엔진으로 실행 중인 게임을 먼저 종료해 주세요."
+            return
+        }
+        dxmtInstalling = true
+        dxmtError = nil
+        progress = 0
+        defer { dxmtInstalling = false }
+        do {
+            // Wine's background services would keep the old winemac.so loaded
+            WineEngine.modern.killAll()
+            try await installDXMTFiles(span: 0...0.95)
+            progress = 1
+            detail = "DXMT 설치 완료"
+        } catch {
+            dxmtError = error.localizedDescription
+        }
+        dxmtReady = ModernEngine.hasDXMT
+    }
+
+    private func installDXMTFiles(span: ClosedRange<Double>) async throws {
+        guard let winemac = ModernEngine.bridgedWinemac else {
+            throw InstallError(message: "이 Miro에는 DXMT용 Wine 부품이 들어 있지 않아요")
+        }
+        detail = "DXMT 받는 중…"
+        let archive = MiroPaths.downloads.appending(path: ModernEngine.dxmtURL.lastPathComponent)
+        try await download(ModernEngine.dxmtURL, to: archive, sha256: ModernEngine.dxmtSHA256, span: span)
+        detail = "DXMT 설치 중…"
+        let winemacDigest = try await Task.detached(priority: .userInitiated) { () -> String in
+            defer { try? FileManager.default.removeItem(at: archive) }
+            try Self.applyDXMT(archive, winemac: winemac)
+            return try Self.sha256(of: winemac)
+        }.value
+        let marker = DXMTMarker(dxmtVersion: ModernEngine.dxmtVersion, dxmtSHA256: ModernEngine.dxmtSHA256,
+                                winemacSHA256: winemacDigest, installedAt: .now)
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
+        encoder.dateEncodingStrategy = .iso8601
+        try encoder.encode(marker).write(to: ModernEngine.dxmtMarker, options: .atomic)
     }
 
     func uninstallModern() {
@@ -243,6 +343,45 @@ final class EngineManager: ObservableObject {
         for item in ["x64", "x32", "dxvk.conf"] where source.appending(path: item).fileExists {
             try fileManager.copyItem(at: source.appending(path: item), to: folder.appending(path: item))
         }
+    }
+
+    /// Puts DXMT's builtin DLLs and Miro's winemac.so into the modern engine. The files they replace (Wine's
+    /// own d3d11/dxgi/d3d10core and winemac.so) are kept in `miro/original` first.
+    nonisolated private static func applyDXMT(_ archive: URL, winemac: URL) throws {
+        let fileManager = FileManager.default
+        let root = ModernEngine.root
+        let staging = root.appending(path: "miro/.dxmt-staging")
+        try? fileManager.removeItem(at: staging)
+        try fileManager.createDirectory(at: staging, withIntermediateDirectories: true)
+        defer { try? fileManager.removeItem(at: staging) }
+        try Tar.untar(tarBall: archive, toURL: staging)
+        guard let release = fileManager.enumerator(at: staging, includingPropertiesForKeys: nil)?
+            .compactMap({ $0 as? URL })
+            .first(where: { $0.lastPathComponent == "x86_64-unix" && $0.appending(path: "winemetal.so").fileExists })?
+            .deletingLastPathComponent()
+        else { throw InstallError(message: "받은 DXMT 파일이 올바르지 않아요") }
+
+        let lib = root.appending(path: "lib/wine")
+        func replace(_ relative: String, with source: URL) throws {
+            let target = lib.appending(path: relative)
+            let backup = ModernEngine.originals.appending(path: relative)
+            if target.fileExists && !backup.fileExists {
+                try fileManager.createDirectory(at: backup.deletingLastPathComponent(), withIntermediateDirectories: true)
+                try fileManager.copyItem(at: target, to: backup)
+            }
+            try? fileManager.removeItem(at: target)
+            try fileManager.copyItem(at: source, to: target)
+        }
+
+        for arch in ["x86_64-windows", "i386-windows"] {
+            for dll in ModernEngine.dxmtDLLs {
+                let source = release.appending(path: "\(arch)/\(dll).dll")
+                guard source.fileExists else { throw InstallError(message: "DXMT에 \(arch)/\(dll).dll이 없어요") }
+                try replace("\(arch)/\(dll).dll", with: source)
+            }
+        }
+        try replace("x86_64-unix/winemetal.so", with: release.appending(path: "x86_64-unix/winemetal.so"))
+        try replace("x86_64-unix/winemac.so", with: winemac)
     }
 
     // MARK: - Prefix

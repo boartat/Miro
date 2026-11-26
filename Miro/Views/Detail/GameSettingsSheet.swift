@@ -15,6 +15,7 @@ struct GameSettingsSheet: View {
     @State private var arguments = ""
     @State private var locale: Locales = .auto
     @State private var winePreference: WinePreference = .auto
+    @State private var graphicsPreference: GraphicsPreference = .auto
     @State private var executable = ""
     @EnvironmentObject private var engines: EngineManager
     @State private var candidates: [String] = []
@@ -50,6 +51,13 @@ struct GameSettingsSheet: View {
                     Picker("엔진", selection: $winePreference) {
                         ForEach(WinePreference.allCases) { preference in
                             Text(preference.title).tag(preference)
+                        }
+                    }
+                    if winePreference != .classic {
+                        Picker("그래픽 (최신 엔진)", selection: $graphicsPreference) {
+                            ForEach(GraphicsPreference.allCases) { preference in
+                                Text(preference.title).tag(preference)
+                            }
                         }
                     }
                 } header: {
@@ -116,6 +124,7 @@ struct GameSettingsSheet: View {
             arguments = game.arguments
             locale = Locales(rawValue: game.locale) ?? .auto
             winePreference = game.winePreference
+            graphicsPreference = game.graphicsPreference
             executable = relativeExecutable
             let root = game.rootFolderURL
             Task.detached(priority: .userInitiated) {
@@ -132,14 +141,29 @@ struct GameSettingsSheet: View {
     private var engineFooter: String {
         switch winePreference {
         case .auto:
-            let current = WineEngine.of(game.wineLearned ?? .classic)
-            return "지금은 \(current.title)로 실행해요. 클래식 엔진에 없는 Windows 기능을 게임이 부르면 "
+            let kind = game.wineLearned ?? .classic
+            let current = WineEngine.of(kind).title(graphics: engines.graphics(for: game))
+            return "지금은 \(current)로 실행해요. 클래식 엔진에 없는 Windows 기능을 게임이 부르면 "
                 + "Miro가 알아서 최신 엔진으로 바꿔서 다시 실행하고 기억해요."
+                + (kind == .modern ? graphicsFooter : "")
         case .classic:
             return WineEngine.classic.summary
         case .modern:
             return WineEngine.modern.summary
                 + (engines.isReady(.modern) ? "" : " 아직 설치되지 않았어요 — 실행하면 설치 안내가 나와요.")
+                + graphicsFooter
+        }
+    }
+
+    /// What the graphics choice means on this Mac right now
+    private var graphicsFooter: String {
+        switch graphicsPreference {
+        case .dxvk:
+            return " 그래픽: DXVK로 그려요. DirectX 9 게임이나 DXMT에서 문제가 있던 게임에 쓰세요."
+        case .auto, .dxmt:
+            return engines.dxmtReady
+                ? " 그래픽: DXMT로 DirectX 10/11을 Metal에 바로 그려요. 같은 화면에서 GPU를 DXVK의 3분의 1 정도만 써요."
+                : " 그래픽: DXMT가 아직 설치되지 않아서 DXVK로 그려요. 설정 → 호환 레이어에서 추가할 수 있어요."
         }
     }
 
@@ -157,6 +181,7 @@ struct GameSettingsSheet: View {
             if !trimmed.isEmpty { entry.name = trimmed }
             entry.arguments = arguments.trimmingCharacters(in: .whitespacesAndNewlines)
             entry.locale = locale.rawValue
+            entry.graphicsPreference = graphicsPreference
             if entry.winePreference != winePreference {
                 entry.winePreference = winePreference
                 // A manual choice starts 자동 over from what it learns next

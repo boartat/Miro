@@ -131,6 +131,11 @@ struct TroubleshootSheet: View {
             Spacer()
             Button("닫기") { dismiss() }
                 .keyboardShortcut(.cancelAction)
+            if failure.engine == .modern, failure.graphics == .dxmt {
+                // DXMT draws only Direct3D 10/11 and is newer than DXVK: offer the proven path
+                Button("DXVK로 다시 실행") { switchGraphicsAndRelaunch(.dxvk) }
+                    .disabled(isInstalling)
+            }
             if needsEngine {
                 Button {
                     Task {
@@ -186,6 +191,14 @@ struct TroubleshootSheet: View {
             if entry.winePreference == .classic { entry.winePreference = .auto }
             entry.wineLearned = .modern
         }
+        guard let game = library.game(failure.gameID) else { return }
+        dismiss()
+        launcher.launch(game)
+    }
+
+    /// Remembers the graphics choice for this game, then starts it again
+    private func switchGraphicsAndRelaunch(_ preference: GraphicsPreference) {
+        library.update(failure.gameID) { $0.graphicsPreference = preference }
         guard let game = library.game(failure.gameID) else { return }
         dismiss()
         launcher.launch(game)

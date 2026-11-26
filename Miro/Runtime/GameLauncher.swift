@@ -31,6 +31,8 @@ struct LaunchFailure: Identifiable, Sendable {
     var engine: WineEngineKind = .classic
     /// Engine that should fix this failure, when it isn't installed yet
     var suggestedEngine: WineEngineKind?
+    /// How the failed run drew Direct3D 10/11 (modern engine only)
+    var graphics: GraphicsBackend?
 }
 
 @MainActor
@@ -99,8 +101,9 @@ final class GameLauncher: ObservableObject {
     }
 
     private func start(_ game: Game, engine: WineEngine, bottle: Bottle) {
+        let graphics: GraphicsBackend? = engine.kind == .modern ? EngineManager.shared.graphics(for: game) : nil
         var environment = ProcessRunner.baseEnvironment
-        environment.merge(engine.environment(for: bottle)) { $1 }
+        environment.merge(engine.environment(for: bottle, graphics: graphics ?? .dxvk)) { $1 }
         if !game.locale.isEmpty {
             environment["LC_ALL"] = game.locale
             environment["LANG"] = game.locale
@@ -179,7 +182,7 @@ final class GameLauncher: ObservableObject {
                 }
                 let analysis = LogAnalyzer.analyze(tail)
                 await GameLauncher.shared.finished(
-                    gameID: gameID, engine: engine.kind, exitCode: exitCode, startedAt: start,
+                    gameID: gameID, engine: engine.kind, graphics: graphics, exitCode: exitCode, startedAt: start,
                     analysis: analysis, logURL: logURL
                 )
             }
@@ -250,7 +253,7 @@ final class GameLauncher: ObservableObject {
     }
 
     private func finished(
-        gameID: UUID, engine kind: WineEngineKind, exitCode: Int32, startedAt start: Date,
+        gameID: UUID, engine kind: WineEngineKind, graphics: GraphicsBackend?, exitCode: Int32, startedAt start: Date,
         analysis: LogAnalyzer.Result, logURL: URL
     ) async {
         running[gameID] = nil
@@ -287,7 +290,7 @@ final class GameLauncher: ObservableObject {
         }
 
         var result = await buildFailure(game: game, title: "게임을 실행하지 못했어요", exitCode: exitCode,
-                                        analysis: analysis, logURL: logURL, engine: kind)
+                                        analysis: analysis, logURL: logURL, engine: kind, graphics: graphics)
         if analysis.needsNewerEngine, kind == .classic, !EngineManager.shared.isReady(.modern) {
             result.suggestedEngine = .modern
         }
@@ -304,8 +307,9 @@ final class GameLauncher: ObservableObject {
                 return LogAnalyzer.analyze(String(text.suffix(400_000)))
             }.value
             let kind = EngineManager.shared.engine(for: game)
+            let graphics: GraphicsBackend? = kind == .modern ? EngineManager.shared.graphics(for: game) : nil
             var result = await buildFailure(game: game, title: "문제 해결 도우미", exitCode: game.lastExitCode,
-                                            analysis: analysis, logURL: logURL, engine: kind)
+                                            analysis: analysis, logURL: logURL, engine: kind, graphics: graphics)
             if (analysis.needsNewerEngine || kind == .modern) && !EngineManager.shared.isReady(.modern) {
                 result.suggestedEngine = .modern
             }
@@ -315,7 +319,7 @@ final class GameLauncher: ObservableObject {
 
     private func buildFailure(
         game: Game, title: String, exitCode: Int32?, analysis: LogAnalyzer.Result, logURL: URL?,
-        engine: WineEngineKind
+        engine: WineEngineKind, graphics: GraphicsBackend? = nil
     ) async -> LaunchFailure {
         // Combine what the log says with what static analysis recommends
         let installed = InstallCenter.shared.installedSet(on: engine)
@@ -335,8 +339,12 @@ final class GameLauncher: ObservableObject {
         var hints = analysis.hints
         hints.append(contentsOf: report.engine.notes)
         if engine == .modern {
-            hints.append("이 게임은 최신 엔진(Wine \(ModernEngine.wineVersion) + DXVK)으로 실행했어요. "
+            let drawn = graphics ?? .dxvk
+            hints.append("이 게임은 최신 엔진(Wine \(ModernEngine.wineVersion) + \(drawn.title))으로 실행했어요. "
                          + "게임 설정에서 엔진을 '클래식'으로 바꿔서 비교해 볼 수 있어요.")
+            if drawn == .dxmt {
+                hints.append("DXMT는 DirectX 10/11만 그려요. 화면이 안 나오거나 바로 꺼지면 아래 'DXVK로 다시 실행'을 눌러 보세요.")
+            }
         }
         if missing.contains(where: { $0.dependencyID == nil }) {
             hints.append("'직접 넣어야 하는 파일'은 Miro가 받을 수 없는 게임 전용 파일이에요. 게임을 받은 원본 폴더에 있는지 확인해 주세요.")
@@ -346,7 +354,7 @@ final class GameLauncher: ObservableObject {
         }
         return LaunchFailure(
             gameID: game.id, gameName: game.name, title: title, exitCode: exitCode,
-            missing: missing, dependencyIDs: ids, hints: hints, logURL: logURL, engine: engine
+            missing: missing, dependencyIDs: ids, hints: hints, logURL: logURL, engine: engine, graphics: graphics
         )
     }
 }

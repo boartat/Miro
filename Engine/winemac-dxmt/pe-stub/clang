@@ -1,0 +1,19 @@
+#!/bin/sh
+# Stand-in for the PE cross compiler so Wine's configure can finish when only Unix-side
+# modules (here winemac.so) are built. It writes placeholder outputs; no PE code is ever built.
+out=""; compile=0; pre=0; srcs=""
+while [ $# -gt 0 ]; do
+  case "$1" in
+    -o) out="$2"; shift ;;
+    -o*) out="${1#-o}" ;;
+    -c) compile=1 ;;
+    -E) pre=1 ;;
+    --version|-v) echo "clang version 20.0.0 (pe stub)"; exit 0 ;;
+    *.c|*.cpp|*.s|*.S) srcs="$srcs $1" ;;
+  esac
+  shift
+done
+[ "$pre" = 1 ] && exit 0
+if [ -n "$out" ]; then echo stub > "$out"; chmod +x "$out"; exit 0; fi
+if [ "$compile" = 1 ]; then for s in $srcs; do b=$(basename "$s"); echo stub > "${b%.*}.o"; done; exit 0; fi
+echo stub > a.out
