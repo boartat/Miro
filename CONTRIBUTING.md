@@ -1,6 +1,6 @@
 # 기여하기
 
-고마워요! 저장소를 포크하고, 새 브랜치에서 고친 다음 Pull Request를 보내 주세요.
+고마워요! 저장소를 포크하고, 새 브랜치에서 고친 다음 Pull Request를 보내 주세요. 궁금한 점은 [이슈](https://github.com/boartat/Miro/issues)나 [minjae@ovqo.dev](mailto:minjae@ovqo.dev)로 물어봐 주세요.
 
 ## 빌드
 

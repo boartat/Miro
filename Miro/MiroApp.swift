@@ -54,6 +54,7 @@ struct MiroApp: App {
             CommandGroup(replacing: .help) {
                 Link("Miro 소스 코드", destination: MiroLinks.repository)
                 Link("문제 신고하기", destination: MiroLinks.issues)
+                Link("문의하기 (\(MiroLinks.contactAddress))", destination: MiroLinks.contact)
                 Link("오픈소스 고지", destination: MiroLinks.notices)
                 Divider()
                 Link("Whisky 원본 프로젝트 (GPL-3.0)", destination: URL(string: "https://github.com/Whisky-App/Whisky")!)

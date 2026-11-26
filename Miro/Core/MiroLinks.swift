@@ -12,6 +12,9 @@ enum MiroLinks {
     static let issues = URL(string: "https://github.com/boartat/Miro/issues")!
     static let license = URL(string: "https://github.com/boartat/Miro/blob/main/LICENSE")!
     static let notices = URL(string: "https://github.com/boartat/Miro/blob/main/THIRD_PARTY_NOTICES.md")!
+    /// The project's public contact address
+    static let contactAddress = "minjae@ovqo.dev"
+    static let contact = URL(string: "mailto:\(contactAddress)")!
 
     static var version: String {
         Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "?"

@@ -62,6 +62,7 @@ private struct GeneralSettings: View {
                     Link("라이선스 (GPL-3.0)", destination: MiroLinks.license)
                     Link("오픈소스 고지", destination: MiroLinks.notices)
                     Link("문제 신고", destination: MiroLinks.issues)
+                    Link("문의 (\(MiroLinks.contactAddress))", destination: MiroLinks.contact)
                 }
                 .font(.system(size: 11.5))
             }

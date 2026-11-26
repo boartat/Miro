@@ -12,7 +12,7 @@ Apple 실리콘 Mac용 무료 오픈소스 Windows 게임·프로그램 런처
 ![Wine 11 + 7.7](https://img.shields.io/badge/Wine-11.21%20%2B%207.7-8a2be2)
 ![D3DMetal · DXMT · DXVK](https://img.shields.io/badge/graphics-D3DMetal%20%C2%B7%20DXMT%20%C2%B7%20DXVK-orange)
 
-**[⬇︎ 다운로드](#다운로드)** · [화면 둘러보기](#화면-둘러보기) · [직접 푼 문제들](#miro가-직접-푼-문제들) · [로드맵](#로드맵) · [가져온 것과 라이선스](#가져온-것과-라이선스) · [English](#english)
+**[⬇︎ 다운로드](#다운로드)** · [화면 둘러보기](#화면-둘러보기) · [직접 푼 문제들](#miro가-직접-푼-문제들) · [로드맵](#로드맵) · [가져온 것과 라이선스](#가져온-것과-라이선스) · [문의](#문의) · [English](#english)
 
 </div>
 
@@ -343,6 +343,11 @@ Apple D3DMetal은 비상업적 배포만 허용되고 수정할 수 없어요. �
 
 Miro는 Apple, Microsoft, CodeWeavers, WineHQ, Valve, Whisky 프로젝트와 관계가 없어요. 각 이름과 상표는 해당 소유자의 것이에요.
 
+## 문의
+
+- 버그·호환성 보고: [이슈](https://github.com/boartat/Miro/issues/new/choose) (실행 로그를 붙여 주면 큰 도움이 돼요)
+- 그 밖의 문의: [minjae@ovqo.dev](mailto:minjae@ovqo.dev)
+
 ## English
 
 **Miro** is a free, open-source (GPL-3.0) launcher for Windows games and programs on Apple Silicon Macs. Its goal: **every Windows game and program running on a Mac, without compatibility worries.** The interface is Korean for now; English is on the roadmap.
@@ -356,5 +361,7 @@ Miro는 Apple, Microsoft, CodeWeavers, WineHQ, Valve, Whisky 프로젝트와 관
   - At 60 FPS on the same scene, DXMT used about a third of DXVK's GPU time.
 - **Mac safety.** A process-storm guard stops Wine before it exhausts the Mac's process table. Running an engine from a long path used to cause exactly that: Wine's font path overflowed its MAX_PATH buffer.
 - **Headless graphics tests.** [`Engine/tests`](Engine/tests) checks D3D11 and D3D12 by drawing off-screen and reading the pixels back, and includes a benchmark.
+
+Contact: [issues](https://github.com/boartat/Miro/issues) for bugs and compatibility reports, [minjae@ovqo.dev](mailto:minjae@ovqo.dev) for anything else.
 
 Built on Whisky, Wine, DXMT, DXVK-macOS, MoltenVK, Apple's Game Porting Toolkit, Gcenx's macOS builds and winetricks. See [the credits](#가져온-것과-라이선스). Not affiliated with Apple, Microsoft, CodeWeavers, WineHQ or Valve.
