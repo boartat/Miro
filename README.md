@@ -12,7 +12,7 @@ Apple 실리콘 Mac용 무료 오픈소스 Windows 게임·프로그램 런처
 ![Wine 11 + 7.7](https://img.shields.io/badge/Wine-11.21%20%2B%207.7-8a2be2)
 ![D3DMetal · DXMT · DXVK](https://img.shields.io/badge/graphics-D3DMetal%20%C2%B7%20DXMT%20%C2%B7%20DXVK-orange)
 
-**[⬇︎ 다운로드](#다운로드)** · [화면 둘러보기](#화면-둘러보기) · [직접 푼 문제들](#miro가-직접-푼-문제들) · [로드맵](#로드맵) · [가져온 것과 라이선스](#가져온-것과-라이선스) · [문의](#문의) · [English](#english)
+**[⬇︎ 다운로드](#다운로드)** · [화면 둘러보기](#화면-둘러보기) · [로드맵](#로드맵) · [가져온 것과 라이선스](#가져온-것과-라이선스) · [문의](#문의) · [English](#english)
 
 </div>
 
@@ -39,7 +39,7 @@ exe만 넘기는게 아니라, 게임 폴더 째로 미로에 던져넣으면 �
 
 어쨌든 여러분들도 저와 같은 경험을 해보셨으면 하네요. 사족이 너무 길었네요. 감사합니다.
 
-**English:** Miro is a free, open-source launcher for Windows games and apps on Apple Silicon Macs. Drop a game folder in and press Play. Miro picks the Wine engine and graphics layer (D3DMetal, DXMT or DXVK), installs missing DLLs, and switches engines when one fails. It also ships a DXMT bridge for official WineHQ Wine 11 builds. [More in English ↓](#english)
+**English:** Miro is a free, open-source launcher for Windows games and apps on Apple Silicon Macs. Drop a game folder in and press Play. Miro picks the Wine engine and graphics layer (D3DMetal, DXMT or DXVK), installs missing DLLs, and switches engines when one fails. [More in English ↓](#english)
 
 ![Miro 홈 화면: 최근 플레이, 폴더별 게임, 나머지 게임이 카드로 보여요](docs/screenshots/01-home.png)
 
@@ -50,7 +50,7 @@ exe만 넘기는게 아니라, 게임 폴더 째로 미로에 던져넣으면 �
   - 실행 전에 게임 exe가 불러오는 DLL을 읽어서 필요한 라이브러리를 미리 보여 줘요.
   - 실행이 실패하면 Wine 로그에서 빠진 DLL을 찾아요. 그 DLL이 든 패키지(Visual C++, DirectX, .NET …)를 받아 설치하고 바로 다시 실행해요.
 - **엔진 자동 전환**: 클래식(Wine 7.7 + D3DMetal)으로 먼저 실행해요. 게임이 클래식에 없는 Windows 기능을 부르면 최신 엔진(Wine 11.21)으로 바꿔 다시 실행하고, 그 결과를 기억해요.
-- **공식 Wine 11에서 DXMT**: DirectX 10/11을 Metal로 바로 그려요. 같은 화면에서 GPU를 DXVK의 3분의 1 정도만 써요. CrossOver 계열 빌드 없이 공식 WineHQ 빌드에서 동작하도록 Miro가 직접 변환층을 만들었어요([아래 설명](#miro가-직접-푼-문제들)).
+- **DXMT 그래픽**: 최신 엔진에서 DirectX 10/11을 Metal로 바로 그려요. 같은 화면에서 GPU를 DXVK의 3분의 1 정도만 써요.
 - **Mac 보호 안전장치**: Wine이 프로세스를 끝없이 띄우면 Mac이 멈추기 전에 Wine을 멈춰요.
 - **게임별 설정**: 효율(E코어만)·기본·성능 모드, 노치까지 채우는 전체 화면, Retina, FPS 표시, 언어, 그래픽 방식(자동·DXMT·DXVK)
 - **스팀 같은 라이브러리**: 커버 이미지, 플레이 시간, 폴더, 숨김(시크릿 박스)
@@ -92,110 +92,6 @@ exe만 넘기는게 아니라, 게임 폴더 째로 미로에 던져넣으면 �
 | --- | --- |
 | ![엔진 설정](docs/screenshots/05-engines.png) | ![라이브러리 설정](docs/screenshots/06-libraries.png) |
 
-## Miro가 직접 푼 문제들
-
-다른 프로젝트의 결과를 가져다 쓰지 않고 원인부터 직접 찾아서 해결한 것들이에요. 전부 오픈소스로 공개해요. Wine, DXMT, Mac 런처를 만드는 분들이 그대로 가져다 쓸 수 있게 기술적인 내용까지 적었어요. 제목을 누르면 펼쳐져요.
-
-<details>
-<summary><b>1. 공식 WineHQ Wine 11에서 DXMT가 동작하지 않던 문제: Wine의 Vulkan 방식을 따라 하는 변환층</b></summary>
-
-**증상**: DXMT v0.80을 공식 WineHQ 11.21 빌드(Gcenx의 macOS 패키지)에 넣으면 장치는 만들어지지만 창에 그리지 못해요(`no exported symbols needed by DXMT`).
-
-**흔한 해결책**: DXMT를 쓰는 다른 프로젝트들은 CrossOver 계열 Wine 빌드(Sikarugir, CrossOver 소스 빌드)를 써서 이 문제를 피해 가요. Miro는 공식 WineHQ 빌드에서 원인을 직접 찾았어요.
-
-**원인 (세 가지가 겹쳐 있었어요)**
-1. DXMT의 Unix 쪽 `winemetal.so`는 CrossOver가 제공하는 `macdrv_functions` 함수 표를, 없으면 `get_win_data` 같은 개별 함수를 `dlsym(RTLD_DEFAULT, …)`로 찾아요. 공식 빌드의 `winemac.so`는 `-fvisibility=hidden`으로 빌드돼서 공개 심볼이 둘뿐이고, 내부 심볼도 지워져 있어요. 그래서 런타임에 우회해서 찾을 수도 없었어요.
-2. DXMT는 `get_win_data()`가 돌려주는 구조체의 앞 네 칸을 `{hwnd, cocoa_window, cocoa_view, client_cocoa_view}`로 읽어요. Wine 11의 `struct macdrv_win_data`는 `{hwnd, cocoa_window, client_view, rects, …}`예요. 함수만 공개하면 DXMT가 창 좌표(`rects`)를 뷰 포인터로 읽고 죽어요.
-3. Wine 11은 창마다 고정된 클라이언트 뷰를 두지 않아요. Vulkan·OpenGL은 필요할 때 만드는 "클라이언트 표면"(`client_surface` / `macdrv_client_surface`)에 그리고, 그 뷰는 present할 때마다 다시 보이게 돼요. GDI로 창을 다시 그리면(`surface.c`) 숨겨져요.
-
-**해결** ([`Engine/winemac-dxmt`](Engine/winemac-dxmt))
-- `dlls/winemac.drv/dxmt.c`: DXMT가 기대하는 모양의 `macdrv_functions` 표를 공개해요.
-- 이 표의 `get_win_data()`는 Wine의 실제 창 정보를 넘기지 않아요. Wine의 Vulkan 경로와 똑같이 `macdrv_CreateClientSurface(hwnd, 0, FALSE)`로 클라이언트 표면을 만들고, 그 뷰를 DXMT가 읽는 자리에 넣은 작은 기록을 돌려줘요. DXMT는 그 뷰 안에 Metal 뷰를 만들어요. Wine의 `MetalViewSwapChain`이 Vulkan을 위해 하는 것과 같은 방식이에요.
-- DXMT는 `CAMetalLayer`에 바로 present하고 드라이버를 다시 부르지 않아요. 그래서 창이 움직이면 표면을 다시 present하고(`macdrv_dxmt_window_pos_changed`), GDI로 다시 그릴 때는 DXMT 뷰를 숨기지 않게 했어요(`macdrv_dxmt_owns_view`).
-- 표면의 수명은 DXMT의 Metal 뷰와 같아요. DXMT를 쓰지 않는 게임에는 아무 영향이 없어요.
-- `winemac.so`만 Wine 11.21 + Staging 소스로 다시 빌드해서 바꿔 끼워요. 엔진의 나머지는 공식 빌드 그대로예요.
-
-**검증**
-- Unity 6000.3 게임 타이틀 화면이 정상으로 그려졌어요.
-- 화면 밖 D3D11 테스트(셰이더로 그리기 → 픽셀 읽기 → 창 크기 변경 후 다시 확인)를 통과했어요.
-- 같은 화면을 60 FPS로 그릴 때 GPU 사용률이 DXMT 약 3.5%, DXVK 약 12%였어요.
-
-Wine과 DXMT 쪽에 제안할 계획이에요.
-</details>
-
-<details>
-<summary><b>2. 엔진 경로가 길면 Mac 전체가 멈추는 문제</b></summary>
-
-**증상**: 경로가 긴 폴더(약 200자 이상)에 Wine 11 엔진을 두고 실행하면, 몇 분 동안 Mac에서 새 프로그램이 하나도 열리지 않았어요. 터미널도 `fork` 실패로 멈췄어요.
-
-**원인**: Wine의 글꼴 초기화가 `<엔진>/share/wine/fonts` 경로를 260자(MAX_PATH) 버퍼에 복사해요. 경로가 넘치면 모든 Wine 프로세스가 시작하자마자 죽어요. 그러면 explorer.exe가 끝없이 다시 시작되면서 macOS의 사용자당 프로세스 한도를 다 써 버려요.
-
-**해결**
-- 엔진은 항상 짧은 경로(`…/Libraries/Engines/wine-11.21`)에 설치해요.
-- 게임마다 프로세스 폭주 감시를 붙였어요. 엔진 폴더에서 실행된 프로세스 수를 세서(`proc_listpids` + `proc_pidpath`), 120개를 넘기 전에 그 엔진의 `wineserver -k`로 멈춰요. 원인을 안내하는 문구도 보여 줘요.
-</details>
-
-<details>
-<summary><b>3. Unity 6.3 게임이 시작하자마자 꺼지는 문제 (IsMouseInPointerEnabled)</b></summary>
-
-**원인**: Unity 6.3(6000.3)의 `UnityPlayer.dll`은 시작할 때 `IsMouseInPointerEnabled` / `EnableMouseInPointer`를 불러요. Apple Game Porting Toolkit의 Wine 7.7에서는 이게 `@ stub`이라 `unimplemented function user32.dll.IsMouseInPointerEnabled`로 바로 종료돼요.
-
-**해결**
-- Wine 11.x는 이 함수들과 마우스 → `WM_POINTER` 변환을 구현했어요. 2026년 2~7월 커밋이고, Wine 버그 59388과 관련 있어요.
-- Miro는 로그에서 `unimplemented function …`을 찾으면 그 게임을 최신 엔진(Wine 11.21)으로 옮겨 바로 다시 실행하고 기억해요.
-- 화면 없이 이 함수들을 직접 부르는 테스트로 엔진마다 확인해요.
-</details>
-
-<details>
-<summary><b>4. Wine 7.7에 없는 Windows 부품을 직접 만들어 넣기 ("Failed to load il2cpp")</b></summary>
-
-최신 Unity IL2CPP 게임은 `api-ms-win-core-winrt-robuffer-l1-1-0.dll`의 `RoGetBufferMarshaler`를 불러요. Wine 7.7에는 이 API-set DLL이 없지만, 같은 함수가 `wintypes.dll`에 이미 구현돼 있어요.
-
-Miro는 기계어가 하나도 없는 아주 작은 DLL을 직접 만들어요. 내보내기 표만 있고, 그 표가 `wintypes.RoGetBufferMarshaler`로 연결돼요([`ShimDLL.swift`](Miro/Runtime/ShimDLL.swift)). 앱을 열 때 다운로드 없이 C: 드라이브에 넣어요.
-</details>
-
-<details>
-<summary><b>5. 빠진 DLL 자동 진단과 설치</b></summary>
-
-- **실행 전**: 게임 exe의 PE 가져오기 표와 지연 가져오기 표를 직접 읽어요([`PEInspector.swift`](Miro/Analysis/PEInspector.swift)). DLL마다 "게임 폴더에 있음 / 설치됨 / Wine 내장 / 없음"으로 나누고, 없는 DLL은 그걸 주는 패키지(winetricks 동사나 공식 설치 파일)와 짝지어요([`DependencyCatalog.swift`](Miro/Runtime/DependencyCatalog.swift)).
-- **실행 후**: Wine 로그에서 `xxx.dll … not found`를 찾아요. Miro가 아는 패키지면 그 엔진의 C: 드라이브에 설치하고 다시 실행해요. 같은 패키지는 한 번만 시도해서 무한 반복을 막아요.
-- **직접 넣어야 하는 파일**: `steam_api.dll` 같은 게임 전용 파일은 받을 수 없으니 따로 알려 줘요.
-</details>
-
-<details>
-<summary><b>6. 엔진 두 개를 나란히, C: 드라이브는 복제로</b></summary>
-
-- 엔진마다 C: 드라이브(Wine prefix)를 따로 써서, 새 엔진이 검증된 엔진의 환경을 바꾸지 않아요.
-- 최신 엔진의 C: 드라이브는 클래식 C: 드라이브를 `cp -c`(APFS 복제)로 만들어서 추가 용량이 거의 없어요. 글꼴, Visual C++, .NET도 그대로 따라와요.
-- `C:\Games`는 링크로 공유해서 게임 파일은 한 벌만 있어요.
-</details>
-
-<details>
-<summary><b>7. 게임 없이, 화면 없이 그래픽 검증하기</b></summary>
-
-[`Engine/tests`](Engine/tests)의 테스트는 화면 밖 작은 창이나 창 없이 돌아가요.
-- **D3D11**: 셰이더로 그리기 → 픽셀 읽기 → 창 크기 변경 후 다시 확인
-- **D3D12**: 컴퓨트 셰이더로 계산한 값 검증
-- **Unity 마우스 API**: 앞의 3번에서 쓰는 함수 확인
-- **벤치마크**와 **연속 실행**
-
-Wine 안에 들어 있는 .NET Framework 컴파일러로 빌드하고, 오류 창이 뜨지 않게 디버거를 끄고 실행해요.
-
-같은 Mac(M4 Pro)에서 잰 벤치마크예요(1프레임당 ms, 낮을수록 좋음).
-
-| 그래픽 방식 | 무거운 셰이더 (1920×1080) | 그리기 명령 4000번 + 셰이더 전환 |
-| --- | --- | --- |
-| DXMT (Wine 11.21 + Miro 변환층) | 0.07 | 2.40 |
-| D3DMetal (Wine 7.7) | 0.08 | 2.84 |
-| DXVK 1.10.3 (Wine 11.21) | 0.28~0.33 | 6.17 |
-</details>
-
-<details>
-<summary><b>8. Windows 컴파일러 없이 Wine 부품 하나만 빌드하기</b></summary>
-
-Wine의 configure는 PE 크로스 컴파일러(mingw)가 없으면 진행하지 않아요. `winemac.so`는 macOS 쪽 코드라 PE 컴파일러가 필요 없어요. 그래서 configure 검사만 통과시키는 빈 컴파일러 스크립트를 쓰고, `make dlls/winemac.drv/winemac.so`만 빌드해요([`Engine/winemac-dxmt/build.sh`](Engine/winemac-dxmt/build.sh)). 약 100MB짜리 llvm-mingw를 받지 않아도 돼요.
-</details>
-
 ## 로드맵
 
 목표는 하나예요: **Windows 게임과 프로그램이 호환성 걱정 없이 모두 Mac에서 돌아가는 것.** 그래서 엔진을 늘리고, 고르는 걸 자동으로 만들고, 많이 시험해요.
@@ -203,7 +99,7 @@ Wine의 configure는 PE 크로스 컴파일러(mingw)가 없으면 진행하지 
 **해낸 것**
 - [x] 클래식 엔진: Wine 7.7 + D3DMetal (Apple Game Porting Toolkit)
 - [x] 최신 엔진: Wine 11.21 Staging, 실패하면 자동으로 엔진 전환
-- [x] 공식 Wine 11에서 DXMT (Miro 변환층), 게임별 DXMT / DXVK
+- [x] 최신 엔진에서 DXMT, 게임별 DXMT / DXVK
 - [x] 빠진 DLL 자동 진단·설치·재실행
 - [x] 화면 없는 그래픽 테스트와 벤치마크
 
@@ -223,7 +119,6 @@ Wine의 configure는 PE 크로스 컴파일러(mingw)가 없으면 진행하지 
 - [ ] 클래식 Wine 7.7 정리 → 엔진 하나로
 - [ ] 영어 UI
 - [ ] 애플 공증, 자동 업데이트
-- [ ] Miro 변환층을 Wine·DXMT에 제안
 
 ## 호환성 테스트
 
@@ -298,7 +193,7 @@ xcodebuild -project Miro.xcodeproj -scheme Miro -configuration Release -derivedD
 - `Miro/Runtime`: 런타임 설치, 엔진(`WineEngine`, `EngineManager`), 라이브러리 설치 큐, 다운로드, 게임 실행
 - `Miro/Views`: SwiftUI 화면
 - `WhiskyKit`: Whisky의 Wine·PE 엔진(런타임 설치기를 GPTK용으로 수정)
-- `Engine/winemac-dxmt`: DXMT 변환층 패치와 빌드 스크립트
+- `Engine/winemac-dxmt`: DXMT용 Wine Mac 드라이버 패치와 빌드 스크립트
 - `Engine/tests`: 화면 없는 그래픽 테스트
 </details>
 
@@ -335,7 +230,7 @@ Apple D3DMetal은 비상업적 배포만 허용되고 수정할 수 없어요. �
 | --- | --- |
 | [Highball](https://github.com/gauthierpiarrette/highball) · [highball-engine](https://github.com/gauthierpiarrette/highball-engine) (GPL-3.0 / LGPL) | 엔진 조립 방식(그래픽 방식별 덮어씌우기, SHA-256 고정), 다음 엔진 후보 |
 | [highball-db](https://github.com/gauthierpiarrette/highball-db) (CC0) | 게임별 그래픽 방식 데이터 (자동 순서에 쓸 예정) |
-| [CrossOver](https://www.codeweavers.com/crossover) 오픈소스 Wine (LGPL) | DXMT가 기대하는 `macdrv_functions` 인터페이스 |
+| [CrossOver](https://www.codeweavers.com/crossover) 오픈소스 Wine (LGPL) | macOS용 Wine 드라이버 인터페이스 |
 | [Sikarugir](https://github.com/Sikarugir-App) · [Gcenx](https://github.com/Gcenx) | macOS용 Wine·DXVK 빌드 |
 | [WineForge](https://github.com/Alien4042x/WineForge) (LGPL) | 공식 Wine에 D3DMetal을 붙이는 다른 접근 (조사) |
 | [UTM d3dmetal-native](https://github.com/utmapp/d3dmetal-native) (MIT) | D3DMetal이 기대하는 호스트 인터페이스 문서 |
@@ -354,13 +249,9 @@ Miro는 Apple, Microsoft, CodeWeavers, WineHQ, Valve, Whisky 프로젝트와 관
 
 - **Drop in and play.** Miro picks the Wine engine and the graphics layer, reads the game's PE imports, installs missing DLLs (Visual C++, DirectX, .NET …) and relaunches on its own.
 - **Two engines, automatic switching.** The classic engine is Wine 7.7 with D3DMetal (Game Porting Toolkit). The modern engine is WineHQ 11.21 Staging with DXMT or DXVK. A game that hits an `unimplemented function` on the classic engine moves to the modern one, and Miro remembers it.
-- **DXMT on official WineHQ Wine 11.** Other projects use CrossOver-based builds for DXMT. Miro adds a small bridge to `winemac.drv` instead ([`Engine/winemac-dxmt`](Engine/winemac-dxmt)).
-  - It exports the `macdrv_functions` table DXMT looks for.
-  - Each window gets a client surface, the same way Wine's Vulkan path does, so DXMT never reads Wine 11's changed `struct macdrv_win_data`.
-  - The surface follows window moves and stays visible across GDI flushes.
-  - At 60 FPS on the same scene, DXMT used about a third of DXVK's GPU time.
-- **Mac safety.** A process-storm guard stops Wine before it exhausts the Mac's process table. Running an engine from a long path used to cause exactly that: Wine's font path overflowed its MAX_PATH buffer.
-- **Headless graphics tests.** [`Engine/tests`](Engine/tests) checks D3D11 and D3D12 by drawing off-screen and reading the pixels back, and includes a benchmark.
+- **DXMT graphics.** On the modern engine DXMT draws Direct3D 10/11 straight to Metal; at 60 FPS on the same scene it used about a third of DXVK's GPU time.
+- **Mac safety.** A process-storm guard stops Wine before it can exhaust the Mac's process table.
+- **Headless graphics tests.** [`Engine/tests`](Engine/tests) checks Direct3D 11 and 12 without showing anything on screen.
 
 Contact: [issues](https://github.com/boartat/Miro/issues) for bugs and compatibility reports, [minjae@ovqo.dev](mailto:minjae@ovqo.dev) for anything else.
 
