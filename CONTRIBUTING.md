@@ -34,6 +34,10 @@ build/Build/Products/Release/Miro.app/Contents/MacOS/Miro -MiroLibraryFolder /Us
 swift Scripts/frame_screenshots.swift <찍은 사진 폴더> docs/screenshots
 ```
 
+## 엔진 테스트
+
+엔진이나 그래픽 방식을 바꾸는 PR은 [`Engine/tests`](Engine/tests)의 화면 없는 테스트를 돌려 결과를 붙여 주세요. 다른 사람의 게임이나 화면을 쓰지 않는 테스트를 우선해요.
+
 ## 라이선스
 
 보내 주신 코드는 GPL-3.0 이상으로 배포돼요. 다른 프로젝트의 코드를 가져올 때는 GPL-3.0과 함께 쓸 수 있는 라이선스인지 확인하고 `THIRD_PARTY_NOTICES.md`에 적어 주세요. Apple D3DMetal 같은 바이너리는 저장소에 넣지 않아요.

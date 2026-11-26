@@ -49,6 +49,8 @@ final class GameLauncher: ObservableObject {
     private var stoppedByUser: Set<UUID> = []
     /// Games whose Wine was stopped by the process-storm guard
     private var stormStopped: Set<UUID> = []
+    /// Libraries already installed automatically for each game this session (never tried twice, so no loops)
+    private var autoInstalled: [UUID: Set<String>] = [:]
     @Published var failure: LaunchFailure?
 
     private init() {}
@@ -289,6 +291,9 @@ final class GameLauncher: ObservableObject {
             }
         }
 
+        // Missing DLLs Miro knows a package for: install them into this engine's C: drive and start again
+        if await installMissingAndRelaunch(game, engine: kind, analysis: analysis) { return }
+
         var result = await buildFailure(game: game, title: "게임을 실행하지 못했어요", exitCode: exitCode,
                                         analysis: analysis, logURL: logURL, engine: kind, graphics: graphics)
         if analysis.needsNewerEngine, kind == .classic, !EngineManager.shared.isReady(.modern) {
@@ -296,6 +301,31 @@ final class GameLauncher: ObservableObject {
         }
         failure = result
         NSApp.requestUserAttention(.informationalRequest)
+    }
+
+    /// Installs the packages that provide the DLLs a failed run was missing, then relaunches the game.
+    /// Returns false when there is nothing new to install or an install failed (the caller shows the sheet).
+    private func installMissingAndRelaunch(_ game: Game, engine kind: WineEngineKind,
+                                           analysis: LogAnalyzer.Result) async -> Bool {
+        let installs = InstallCenter.shared
+        let tried = autoInstalled[game.id] ?? []
+        var packages: [Dependency] = []
+        for dll in analysis.missingDLLs {
+            guard let package = DependencyCatalog.provider(of: dll), !tried.contains(package.id),
+                  !installs.isInstalled(package.id, on: kind), !packages.contains(where: { $0.id == package.id })
+            else { continue }
+            packages.append(package)
+        }
+        guard !packages.isEmpty else { return false }
+        autoInstalled[game.id, default: []].formUnion(packages.map(\.id))
+
+        let names = packages.map(\.name).joined(separator: ", ")
+        GameLibrary.shared.showToastMessage("\(game.name): 필요한 라이브러리(\(names))를 설치하고 다시 실행할게요")
+        await installs.installAndWait(packages, engine: kind)
+        guard packages.allSatisfy({ installs.isInstalled($0.id, on: kind) }),
+              let updated = GameLibrary.shared.game(game.id) else { return false }
+        launch(updated)
+        return true
     }
 
     /// "문제 해결 도우미": re-reads the last log and the static analysis for a game

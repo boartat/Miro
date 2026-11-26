@@ -87,9 +87,9 @@ final class InstallCenter: ObservableObject {
         startWorkerIfNeeded()
     }
 
-    /// Install and wait until the queue is empty (used by first-run setup)
-    func installAndWait(_ dependencies: [Dependency]) async {
-        enqueue(dependencies)
+    /// Install and wait until the queue is empty (first-run setup, automatic installs after a failed launch)
+    func installAndWait(_ dependencies: [Dependency], engine: WineEngineKind = .classic) async {
+        enqueue(dependencies, engine: engine)
         guard isBusy else { return }
         await withCheckedContinuation { continuation in
             waiters.append(continuation)
