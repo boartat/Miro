@@ -23,6 +23,22 @@ Apple 실리콘 Mac용 무료 오픈소스 Windows 게임·프로그램 런처
 > [!NOTE]
 > Miro는 혼자 만든 게 아니에요. [Whisky](https://github.com/Whisky-App/Whisky)를 바탕으로 [Wine](https://www.winehq.org), [DXMT](https://github.com/3Shain/dxmt), [DXVK-macOS](https://github.com/Gcenx/DXVK-macOS), [MoltenVK](https://github.com/KhronosGroup/MoltenVK), Apple [Game Porting Toolkit](https://developer.apple.com/games/game-porting-toolkit/), [Gcenx의 macOS 빌드](https://github.com/Gcenx/macOS_Wine_builds), [winetricks](https://github.com/Winetricks/winetricks) 같은 많은 오픈소스 위에 만들어졌어요. 무엇을 가져왔고 무엇을 직접 만들었는지는 [가져온 것과 라이선스](#가져온-것과-라이선스)에 모두 적어 뒀어요.
 
+### 만든 사람의 말
+
+Mac에서 Windows 게임·프로그램을 실행하는 무료 오픈소스 런처인 Miro 입니다. [Whisky](https://github.com/Whisky-App/Whisky)(GPL-3.0)를 포크해서 만들었습니다..
+
+참고: 이 프로젝트는 생성형 ai인 claude를 활용하여 제작하였으며, 해당 프로그램은 수익을 창출하지 않습니다. 또한 유료화 계획도 없으며 순전히 개인의 호기심에서 시작한 프로젝트입니다.
+그냥 제가 쓰기 편하라고 만든 앱이다 보니 어느정도 유지보수는 진행할거지만 어디까지 된다는 보장못합니다. 따라서 사용자분들의 보고가 큰 도움이 될겁니다.
+현재 ai티가 많이 날텐데, 초기버전이라 디자인적으로 신경을 많이 못썼습니다...ㅠ 새로운 엔진 도입하면서 갈아엎어보도록 하겠습니다.
+
+기존의 와인기반 윈도우 호환 프로그램들은 너무 복잡했습니다. 게임하나 실행하는데 정말 미로같았거든요. 그래서 직관적으로 잘 작동하는 프로그램이 없을까 싶어서 미로를 계획 하게 되었습니다.
+레티나 디스플레이 모드로 진행시 노치부분까지 게임을 꽉 채워주는 기능도 존재합니다. 
+기존에 윈도우 pc를 쓰다가 맥으로 넘어오게 되었는데 저는 좀 쯔꾸르나 유니티게임같은것들 많이 즐기는편이라.. 이거 못하는게 좀 컸거든요.
+그런데 과장 조금 보태서 미로를 쓰면서 큰 걱정이 없어졌습니다. 게임뿐만 아니라 프로그램들도 실행할 수 있으니 편하고요.
+exe만 넘기는게 아니라, 게임 폴더 째로 미로에 던져넣으면 자동으로 인식하는 기능도 있답니다.
+
+어쨌든 여러분들도 저와 같은 경험을 해보셨으면 하네요. 사족이 너무 길었네요. 감사합니다.
+
 **English:** Miro is a free, open-source launcher for Windows games and apps on Apple Silicon Macs. Drop a game folder in and press Play. Miro picks the Wine engine and graphics layer (D3DMetal, DXMT or DXVK), installs missing DLLs, and switches engines when one fails. It also ships a DXMT bridge for official WineHQ Wine 11 builds. [More in English ↓](#english)
 
 ![Miro 홈 화면: 최근 플레이, 폴더별 게임, 나머지 게임이 카드로 보여요](docs/screenshots/01-home.png)
@@ -56,7 +72,7 @@ Apple 실리콘 Mac용 무료 오픈소스 Windows 게임·프로그램 런처
 
 ## 화면 둘러보기
 
-> 사진 속 게임은 화면 예시용으로 만든 가짜 데모 게임이에요.
+> 사진 속 게임은 화면 예시용으로 만든 데모예요(실제 게임이 아니에요). 어떤 게임이 어디까지 구동되는지는 [호환성 테스트](#호환성-테스트)로 계속 확인하고 있어요.
 
 **게임 페이지**: 플레이 버튼 옆에서 효율·기본·성능 모드를 고르고, 아래에서 Retina·전체 화면·FPS 표시를 켜고 꺼요. 오른쪽 게임 정보에는 어떤 엔진으로 실행되는지 보여요.
 
