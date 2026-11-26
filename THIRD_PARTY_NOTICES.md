@@ -15,7 +15,7 @@ Miro는 [Whisky](https://github.com/Whisky-App/Whisky)(© Whisky contributors, G
 | [cabextract](https://www.cabextract.org.uk/) 1.11 (libmspack 포함) | GPL-3.0 이상 (libmspack은 LGPL-2.1) | 각 릴리즈에 `cabextract-1.11.tar.gz` 첨부 (SHA-256 `b5546db1155e4c718ff3d4b278573604f30dd64c3c5bfd4657cd089b823a3ac6`) |
 | 게임별 호환성 데이터 (`compat-db.json`, highball-db의 게임 항목에서 추림) | CC0-1.0 | [highball-db](https://github.com/gauthierpiarrette/highball-db) (`db/games`만 사용, ODbL인 `db/derived`는 쓰지 않음) |
 
-Miro 1.1에는 DXMT용으로 고친 Wine Mac 드라이버 `winemac.so`(LGPL-2.1 이상)가 들어 있었어요. 소스는 [Engine/winemac-dxmt](Engine/winemac-dxmt)와 1.1.0 릴리즈 첨부 파일에 있어요.
+Miro 1.1에는 Miro Metal Bridge, 곧 DXMT용으로 고친 Wine Mac 드라이버 `winemac.so`(LGPL-2.1 이상)가 들어 있었어요. 소스는 [Engine/miro-metal-bridge](Engine/miro-metal-bridge)와 1.1.0 릴리즈 첨부 파일에 있어요.
 
 ## 앱이 처음 실행할 때 원래 배포처에서 내려받는 것 (Miro에는 들어 있지 않음)
 

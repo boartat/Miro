@@ -106,7 +106,7 @@ exe만 넘기는게 아니라, 게임 폴더 째로 미로에 던져넣으면 �
 **해낸 것**
 - [x] 클래식 엔진: Wine 7.7 + D3DMetal (Apple Game Porting Toolkit)
 - [x] 최신 엔진: Wine 11.21 Staging, 실패하면 자동으로 엔진 전환 (1.1)
-- [x] 최신 엔진에서 DXMT, 게임별 DXMT / DXVK
+- [x] **Miro Metal Bridge**: 공식 WineHQ Wine 11에서 DXMT (1.1), 게임별 DXMT / DXVK
 - [x] 빠진 DLL 자동 진단·설치·재실행
 - [x] 안전한 DLL 설치: 검증된 목록, 공식 배포처와 해시 확인, 설치 전 복구 지점과 자동 되돌리기 (1.2)
 - [x] 화면 없는 그래픽 테스트와 벤치마크
@@ -181,7 +181,7 @@ Xcode 16 이상, Apple 실리콘 Mac.
 xcodebuild -project Miro.xcodeproj -scheme Miro -configuration Release -derivedDataPath build build
 ```
 
-결과물은 `build/Build/Products/Release/Miro.app`(로컬 실행용 ad-hoc 서명)이에요. DXMT용 `winemac.so` 빌드는 [`Engine/winemac-dxmt`](Engine/winemac-dxmt), 스크린샷과 테스트는 [`CONTRIBUTING.md`](CONTRIBUTING.md)를 참고하세요.
+결과물은 `build/Build/Products/Release/Miro.app`(로컬 실행용 ad-hoc 서명)이에요. Miro Metal Bridge 빌드는 [`Engine/miro-metal-bridge`](Engine/miro-metal-bridge), 스크린샷과 테스트는 [`CONTRIBUTING.md`](CONTRIBUTING.md)를 참고하세요.
 
 ### 데이터 위치
 
@@ -203,7 +203,7 @@ xcodebuild -project Miro.xcodeproj -scheme Miro -configuration Release -derivedD
 - `Miro/Runtime`: 런타임 설치, 엔진(`WineEngine`, `EngineManager`), 라이브러리 설치 큐, 다운로드, 게임 실행
 - `Miro/Views`: SwiftUI 화면
 - `WhiskyKit`: Whisky의 Wine·PE 엔진(런타임 설치기를 GPTK용으로 수정)
-- `Engine/winemac-dxmt`: DXMT용 Wine Mac 드라이버 패치와 빌드 스크립트
+- `Engine/miro-metal-bridge`: Miro Metal Bridge (공식 WineHQ Wine에서 DXMT를 쓰게 하는 Wine Mac 드라이버 패치)와 빌드 스크립트
 - `Engine/tests`: 화면 없는 그래픽 테스트
 </details>
 

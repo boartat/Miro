@@ -45,7 +45,7 @@
 +++ b/dlls/winemac.drv/dxmt.c
 @@ -0,0 +1,269 @@
 +/*
-+ * MACDRV interface for DXMT
++ * Miro Metal Bridge: MACDRV interface for DXMT
 + *
 + * Copyright 2026 Miro contributors
 + *

@@ -1,9 +1,9 @@
 #!/bin/sh
 #
-# Builds Miro's winemac.so for the modern engine: Wine 11.21 Staging (the same source as the Gcenx
-# macOS build Miro downloads) plus winemac-dxmt.patch, which lets DXMT draw into Wine windows.
+# Builds Miro Metal Bridge: the Wine Mac driver (winemac.so) of Wine 11.21 Staging (the same source as
+# Gcenx's macOS build) plus miro-metal-bridge.patch, which lets DXMT draw into Wine windows on WineHQ Wine.
 #
-#     Engine/winemac-dxmt/build.sh [work folder]
+#     Engine/miro-metal-bridge/build.sh [work folder]
 #
 # Needs Xcode (clang), Rosetta 2 and bison 3 or newer (`brew install bison`). Only the Unix-side
 # winemac.so is built, so no PE cross compiler is needed: pe-stub/clang only lets configure finish.
@@ -17,8 +17,7 @@ STAGING_SHA256=a6174c005f549717f5329a952dcf2de0948b5faec310c2416d3cb7fad56f1645
 
 HERE=$(cd "$(dirname "$0")" && pwd)
 WORK=${1:-/tmp/miro-winemac}
-# .so.bin: under the app target Xcode would try to link a .so instead of copying it
-OUT="$HERE/../../Miro/Engine/winemac-$WINE_VERSION-dxmt.so.bin"
+OUT="$WORK/winemac.so"
 BISON_DIR=$(brew --prefix bison 2>/dev/null || echo /opt/homebrew/opt/bison)
 
 mkdir -p "$WORK"
@@ -37,7 +36,7 @@ tar -xf "wine-$WINE_VERSION.tar.xz"
 tar -xzf "wine-staging-$WINE_VERSION.tar.gz"
 python3 "wine-staging-$WINE_VERSION/staging/patchinstall.py" DESTDIR="$WORK/wine-$WINE_VERSION" \
     --all --backend=patch --no-autoconf > staging.log
-(cd "wine-$WINE_VERSION" && patch -p1 < "$HERE/winemac-dxmt.patch")
+(cd "wine-$WINE_VERSION" && patch -p1 < "$HERE/miro-metal-bridge.patch")
 
 mkdir build
 cd build
