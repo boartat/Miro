@@ -8,6 +8,7 @@
 | `d3d12-compute-test.cs` | D3D12 장치, 루트 시그니처, 컴퓨트 PSO, 결과 버퍼 읽기 | `PASS` / `FAIL …` |
 | `pointer-api-test.cs` | Unity 6.3이 시작할 때 부르는 `IsMouseInPointerEnabled` / `EnableMouseInPointer` | `PASS` / `FAIL …` |
 | `d3d11-bench.cs` | 무거운 셰이더와 그리기 명령 처리 속도, `soak <초>`로 연속 실행 | 1프레임당 ms |
+| `d3d11-memory-test.cs` | 32MB보다 큰 `WRITE_DISCARD`를 몰아친 뒤 메모리가 돌아오는지 ([DXMT #260](https://github.com/3Shain/dxmt/issues/260)), `Engine/miroe/tools/memwatch.sh`로 측정 | 구간별 `phase` 줄 |
 | `cjk-text-test.cs` | 한국어·일본어·중국어가 GDI+와 GDI에서 실제 글자로 그려지는지(네모 □가 아닌지), 글꼴 19개 | `PASS` / `FAIL n cases` |
 
 ## 빌드

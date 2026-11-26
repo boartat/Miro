@@ -2,8 +2,9 @@
 
 Miro의 차세대 엔진이에요. **애플 실리콘 Mac 전용 Wine 기반 엔진**으로, Wine 개발자들이 이미 알고 있는 문제를 Mac 고유 기술로 보완하는 게 목표예요. 아직 준비 단계(0.0)라서 Miro 앱에는 들어가 있지 않아요.
 
+- [RESEARCH.md](RESEARCH.md): 통합 연구 엔진 계획 (합칠 프로젝트, 라이선스, 연구 과제 순위)
 - [PROBLEMS.md](PROBLEMS.md): Mac용 Wine의 알려진 문제 목록과 miroe의 방향
-- 측정 도구: [`tools/profile.sh`](tools/profile.sh), [`tools/frame-breakdown.py`](tools/frame-breakdown.py)
+- 측정 도구: [`tools/profile.sh`](tools/profile.sh)(CPU 시간), [`tools/frame-breakdown.py`](tools/frame-breakdown.py), [`tools/memwatch.sh`](tools/memwatch.sh)(메모리)
 - 한중일 글꼴 연결: [`prefix/cjk-fonts.py`](prefix/cjk-fonts.py)
 - 그래픽 다리: [`../miro-metal-bridge`](../miro-metal-bridge)
 - 화면 없는 테스트: [`../tests`](../tests)
