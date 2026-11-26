@@ -227,7 +227,7 @@ Miro 전체는 **GPL-3.0 이상**이에요. [Whisky](https://github.com/Whisky-A
 | Wine 7.7 + Apple D3DMetal (Game Porting Toolkit 빌드) | LGPL-2.1 / Apple 라이선스 | [Gcenx/game-porting-toolkit](https://github.com/Gcenx/game-porting-toolkit) |
 | Wine 11 (CodeWeavers CrossOver 26.3 오픈소스 트리, Highball 빌드) | LGPL-2.1 | [highball-engine](https://github.com/gauthierpiarrette/highball-engine) (빌드 레시피·패치 공개) |
 | 런타임 프레임워크 (GStreamer, MoltenVK, FreeType … + Apple D3DMetal) | 각 라이선스 (LGPL, Apache-2.0 …) / Apple 라이선스 | [Sikarugir-App/Template](https://github.com/Sikarugir-App/Template) |
-| DXMT (Highball 브랜치) | MIT | [highball-engine](https://github.com/gauthierpiarrette/highball-engine), 원본 [3Shain/dxmt](https://github.com/3Shain/dxmt) |
+| DXMT (Highball 브랜치) | LGPL-2.1 이상 (2026-04-25부터. 그 전 버전은 MIT) | [highball-engine](https://github.com/gauthierpiarrette/highball-engine), 원본 [3Shain/dxmt](https://github.com/3Shain/dxmt) |
 | MoltenVK 1.4.2 (Highball 패치) | Apache-2.0 | [Highball](https://github.com/gauthierpiarrette/highball) |
 | 오디오 보정 라이브러리, NVAPI 스텁 | MIT | [highball-engine](https://github.com/gauthierpiarrette/highball-engine) |
 | DXVK-macOS 1.10.3 | zlib | [Gcenx/DXVK-macOS](https://github.com/Gcenx/DXVK-macOS) |

@@ -15,6 +15,8 @@ Miro는 [Whisky](https://github.com/Whisky-App/Whisky)(© Whisky contributors, G
 | [cabextract](https://www.cabextract.org.uk/) 1.11 (libmspack 포함) | GPL-3.0 이상 (libmspack은 LGPL-2.1) | 각 릴리즈에 `cabextract-1.11.tar.gz` 첨부 (SHA-256 `b5546db1155e4c718ff3d4b278573604f30dd64c3c5bfd4657cd089b823a3ac6`) |
 | 게임별 호환성 데이터 (`compat-db.json`, highball-db의 게임 항목에서 추림) | CC0-1.0 | [highball-db](https://github.com/gauthierpiarrette/highball-db) (`db/games`만 사용, ODbL인 `db/derived`는 쓰지 않음) |
 
+`Engine/miroe/scripts`의 빌드 스크립트 일부는 [Hadron](https://github.com/Broyojo/hadron)의 스크립트를 가져오거나 고친 것이에요(Copyright (c) 2026 David Andrews, BSD 계열 라이선스, `Engine/miroe/scripts/LICENSE.hadron`). `Engine/miroe/patches/dxmt`의 패치는 DXMT와 같은 LGPL-2.1 이상이에요. miroe 연구 엔진 자체는 아직 Miro 앱에 들어 있지 않아요.
+
 Miro 1.1에는 Miro Metal Bridge, 곧 DXMT용으로 고친 Wine Mac 드라이버 `winemac.so`(LGPL-2.1 이상)가 들어 있었어요. 소스는 [Engine/miro-metal-bridge](Engine/miro-metal-bridge)와 1.1.0 릴리즈 첨부 파일에 있어요.
 
 ## 앱이 처음 실행할 때 원래 배포처에서 내려받는 것 (Miro에는 들어 있지 않음)
@@ -27,7 +29,7 @@ Miro 1.1에는 Miro Metal Bridge, 곧 DXMT용으로 고친 Wine Mac 드라이버
 | MoltenVK 1.4.2 (Highball 패치) | Apache-2.0 | [gauthierpiarrette/highball](https://github.com/gauthierpiarrette/highball) |
 | 오디오 보정 라이브러리(audiobuf), 32비트 NVAPI 스텁 | MIT | [gauthierpiarrette/highball-engine](https://github.com/gauthierpiarrette/highball-engine) |
 | DXVK-macOS 1.10.3 | zlib | [Gcenx/DXVK-macOS](https://github.com/Gcenx/DXVK-macOS) |
-| DXMT (Highball 브랜치, d3d11 · dxgi · d3d10core · winemetal) | MIT | [gauthierpiarrette/highball-engine](https://github.com/gauthierpiarrette/highball-engine), 원본 [3Shain/dxmt](https://github.com/3Shain/dxmt) |
+| DXMT (Highball 브랜치, d3d11 · dxgi · d3d10core · winemetal) | LGPL-2.1 이상 (DXMT는 2026-04-25에 MIT에서 바꿨어요. Miro 1.1에 넣은 v0.80은 MIT) | [gauthierpiarrette/highball-engine](https://github.com/gauthierpiarrette/highball-engine), 원본 [3Shain/dxmt](https://github.com/3Shain/dxmt) |
 | winetricks | LGPL-2.1 | [Winetricks/winetricks](https://github.com/Winetricks/winetricks) |
 | Visual C++, DirectX, .NET, 글꼴 등 Windows 라이브러리 | 각 배포사(대부분 Microsoft)의 라이선스 | Miro에 들어 있지 않아요. winetricks(버전 고정, 해시 확인)가 배포사 서버(옛 DirectX 런타임은 원본과 해시가 같은 보관본)에서 받아 SHA-256으로 확인해요 |
 | RPG Maker RTP | 각 RTP의 라이선스 | [rpgmakerweb.com](https://www.rpgmakerweb.com/run-time-package) |

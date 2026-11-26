@@ -1,0 +1,68 @@
+From 671fe679c49216f3c03eee20b0999f9c531c26c2 Mon Sep 17 00:00:00 2001
+From: miroe-lab <lab@miroe.invalid>
+Date: Fri, 27 Nov 2026 01:53:49 +0900
+Subject: [PATCH] exp: DXMT #260 reporter's proposal (dynamic fifo drain,
+ oversized staging blocks)
+
+---
+ src/dxmt/dxmt_dynamic.cpp             |  5 +++++
+ src/dxmt/dxmt_ring_bump_allocator.hpp | 11 ++++++-----
+ 2 files changed, 11 insertions(+), 5 deletions(-)
+
+diff --git a/src/dxmt/dxmt_dynamic.cpp b/src/dxmt/dxmt_dynamic.cpp
+index ce7941e..ab2a67a 100644
+--- a/src/dxmt/dxmt_dynamic.cpp
++++ b/src/dxmt/dxmt_dynamic.cpp
+@@ -1,5 +1,6 @@
+ #include "dxmt_dynamic.hpp"
+ #include "dxmt_texture.hpp"
++#include "dxmt_ring_bump_allocator.hpp"
+ 
+ namespace dxmt {
+ DynamicBuffer::DynamicBuffer(Buffer *buffer, Flags<BufferAllocationFlag> flags) :
+@@ -32,6 +33,10 @@ DynamicBuffer::allocate(uint64_t coherent_seq_id) {
+     }
+     ret = std::move(entry.allocation);
+     fifo.pop();
++    // DXMT #260 (reporter's proposal): drop one more entry that has been free for a while, so the queue
++    // drains back down after a burst of WRITE_DISCARD maps
++    if (!fifo.empty() && fifo.front().will_free_at + kStagingBlockLifetime < coherent_seq_id)
++      fifo.pop();
+     break;
+   }
+   if (!ret.ptr())
+diff --git a/src/dxmt/dxmt_ring_bump_allocator.hpp b/src/dxmt/dxmt_ring_bump_allocator.hpp
+index 5c92d92..8455efe 100644
+--- a/src/dxmt/dxmt_ring_bump_allocator.hpp
++++ b/src/dxmt/dxmt_ring_bump_allocator.hpp
+@@ -210,13 +210,13 @@ RingBumpState<Allocator, BlockSize, mutex>::Allocation &
+ RingBumpState<Allocator, BlockSize, mutex>::allocate_or_reuse_block(
+     uint64_t seq_id, uint64_t coherent_id, size_t block_size
+ ) {
++  // DXMT #260 (reporter's proposal): round oversized requests up to whole blocks, reuse any free block that
++  // is large enough, and free a free block that is too small instead of stopping at it
++  block_size = align(block_size, BlockSize);
+   while (!fifo.empty()) {
+     auto &front = fifo.front();
+     if (front.last_used_seq_id < coherent_id) {
+-      if (front.total_size != BlockSize) {
+-        fifo.pop();
+-        continue;
+-      } else if (front.total_size >= block_size) {
++      if (front.total_size >= block_size) {
+         front.last_used_seq_id = seq_id;
+         front.allocated_size = 0;
+         front.inc_time_to_live = 0;
+@@ -224,7 +224,8 @@ RingBumpState<Allocator, BlockSize, mutex>::allocate_or_reuse_block(
+         fifo.pop();
+         return fifo.back();
+       }
+-      WARN("forced to allocate new block of size ", block_size);
++      fifo.pop();
++      continue;
+     }
+     break;
+   }
+-- 
+2.54.0 (Apple Git-157)
+
