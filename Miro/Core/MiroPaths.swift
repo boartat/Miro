@@ -36,8 +36,11 @@ enum MiroPaths {
 
     /// Miro's shared Windows 11 prefix (classic engine)
     static let bottle = BottleData.defaultBottleDir.appending(path: "Miro")
-    /// The modern engine's prefix: an APFS clone of `bottle` whose C:\Games links back to `bottle`
-    static let modernBottle = BottleData.defaultBottleDir.appending(path: "Miro-W11")
+    /// The modern engine's prefix: an APFS clone (of the previous modern prefix, or of `bottle`) whose
+    /// C:\Games links back to `bottle`
+    static let modernBottle = BottleData.defaultBottleDir.appending(path: "Miro-CX")
+    /// Prefix of the modern engine Miro 1.1 used (WineHQ 11.21); the new one starts as a copy of it
+    static let previousModernBottle = BottleData.defaultBottleDir.appending(path: "Miro-W11")
     static var driveC: URL { bottle.appending(path: "drive_c") }
     /// Game folders imported into Miro live at C:\Games\<name>
     static var gamesFolder: URL { driveC.appending(path: "Games") }

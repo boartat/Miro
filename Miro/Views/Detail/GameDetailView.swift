@@ -672,10 +672,9 @@ struct GameInfoCard: View {
 
     private var compatibilityLayer: String {
         let version = runtime.bottle?.settings.windowsVersion.pretty() ?? "Windows 11"
-        let engines = EngineManager.shared
-        let engine = WineEngine.of(engines.engine(for: game))
+        let plan = LaunchPlanner.plans(for: game).first
         let mode = game.winePreference == .auto ? " (자동)" : ""
-        return "\(version) · \(engine.title(graphics: engines.graphics(for: game)))\(mode)"
+        return "\(version) · \(plan?.title ?? "엔진 설치 필요")\(mode)"
     }
 
     private var localeName: String {

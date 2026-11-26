@@ -51,28 +51,38 @@ final class GameLauncher: ObservableObject {
     private var stormStopped: Set<UUID> = []
     /// Libraries already installed automatically for each game this session (never tried twice, so no loops)
     private var autoInstalled: [UUID: Set<String>] = [:]
+    /// Plans tried since the player pressed 플레이 (automatic retries walk down LaunchPlanner's list)
+    private var tried: [UUID: [LaunchPlan]] = [:]
     @Published var failure: LaunchFailure?
 
     private init() {}
 
     func isRunning(_ id: UUID) -> Bool { running[id] != nil }
 
+    /// The player pressed 플레이: start with the first plan
     func launch(_ game: Game) {
+        tried[game.id] = []
+        launch(game, plan: nil)
+    }
+
+    private func launch(_ game: Game, plan wanted: LaunchPlan?) {
         guard running[game.id] == nil, !preparing.contains(game.id) else { return }
         let engines = EngineManager.shared
-        let kind = engines.engine(for: game)
-        guard engines.isReady(kind), let bottle = engines.bottle(for: kind) else {
-            failure = kind == .classic
+        guard let plan = wanted ?? LaunchPlanner.plans(for: game).first,
+              let bottle = engines.bottle(for: plan.engine) else {
+            let needsModern = game.winePreference == .modern || game.wineLearned == .modern
+                || !engines.isReady(.classic)
+            failure = needsModern && !engines.isReady(.modern)
                 ? LaunchFailure(
+                    gameID: game.id, gameName: game.name, title: "최신 엔진이 필요해요",
+                    exitCode: nil, missing: [], dependencyIDs: [],
+                    hints: ["이 게임은 최신 엔진(Wine \(ModernEngine.wineVersion))이 필요해요. "
+                            + "아래에서 설치하면 바로 실행돼요 (\(ModernEngine.downloadSize))."],
+                    logURL: nil, engine: .modern, suggestedEngine: .modern)
+                : LaunchFailure(
                     gameID: game.id, gameName: game.name, title: "Windows 호환 레이어가 아직 준비되지 않았어요",
                     exitCode: nil, missing: [], dependencyIDs: [],
                     hints: ["처음 설정을 완료하면 게임을 실행할 수 있어요."], logURL: nil)
-                : LaunchFailure(
-                    gameID: game.id, gameName: game.name, title: "최신 엔진이 필요해요",
-                    exitCode: nil, missing: [], dependencyIDs: [],
-                    hints: ["이 게임은 최신 엔진(Wine \(ModernEngine.wineVersion))으로 실행하도록 설정되어 있어요. "
-                            + "아래에서 설치하면 바로 실행돼요 (\(ModernEngine.downloadSize))."],
-                    logURL: nil, engine: .modern, suggestedEngine: .modern)
             return
         }
         guard game.exists else {
@@ -81,31 +91,32 @@ final class GameLauncher: ObservableObject {
                 exitCode: nil, missing: [MissingItem(file: game.fileName, dependencyID: nil)], dependencyIDs: [],
                 hints: ["파일이 이동되었거나 삭제된 것 같아요: \(game.executableURL.abbreviatedPath)",
                         "게임 설정에서 '위치 다시 지정'으로 새 위치를 알려주세요."],
-                logURL: nil, engine: kind)
+                logURL: nil, engine: plan.engine)
             return
         }
 
-        let engine = WineEngine.of(kind)
+        let engine = WineEngine.of(plan.engine)
+        if !(tried[game.id] ?? []).contains(plan) { tried[game.id, default: []].append(plan) }
         preparing.insert(game.id)
         Task {
             // Retina is a prefix-wide registry value: switch it to this game's choice before starting
             if RetinaSetting.current(in: engine.bottleURL) != game.retina {
                 await engine.setRetina(game.retina, bottle: bottle)
             }
-            if kind == .modern {
+            if plan.graphics == .dxvk {
                 try? await Task.detached(priority: .userInitiated) {
                     try EngineManager.installDXVK(into: engine.bottleURL)
                 }.value
             }
             preparing.remove(game.id)
-            start(game, engine: engine, bottle: bottle)
+            start(game, plan: plan, engine: engine, bottle: bottle)
         }
     }
 
-    private func start(_ game: Game, engine: WineEngine, bottle: Bottle) {
-        let graphics: GraphicsBackend? = engine.kind == .modern ? EngineManager.shared.graphics(for: game) : nil
+    private func start(_ game: Game, plan: LaunchPlan, engine: WineEngine, bottle: Bottle) {
+        let graphics = plan.graphics
         var environment = ProcessRunner.baseEnvironment
-        environment.merge(engine.environment(for: bottle, graphics: graphics ?? .dxvk)) { $1 }
+        environment.merge(engine.environment(for: bottle, graphics: graphics)) { $1 }
         if !game.locale.isEmpty {
             environment["LC_ALL"] = game.locale
             environment["LANG"] = game.locale
@@ -128,7 +139,7 @@ final class GameLauncher: ObservableObject {
             engine: game.engine, fullscreen: game.fullscreen, fill: fill, native: native,
             windowed: FullscreenMode.windowedSize(retina: game.retina)
         )
-        let userArguments = engine.launchArguments(for: game.engine) + displayArguments
+        let userArguments = engine.launchArguments(for: game.engine, graphics: graphics) + displayArguments
             + game.arguments.split(whereSeparator: \.isWhitespace).map(String.init)
         let arguments: [String]
         switch game.executableURL.pathExtension.lowercased() {
@@ -184,8 +195,7 @@ final class GameLauncher: ObservableObject {
                 }
                 let analysis = LogAnalyzer.analyze(tail)
                 await GameLauncher.shared.finished(
-                    gameID: gameID, engine: engine.kind, graphics: graphics, exitCode: exitCode, startedAt: start,
-                    analysis: analysis, logURL: logURL
+                    gameID: gameID, plan: plan, exitCode: exitCode, startedAt: start, analysis: analysis, logURL: logURL
                 )
             }
         } catch {
@@ -255,7 +265,7 @@ final class GameLauncher: ObservableObject {
     }
 
     private func finished(
-        gameID: UUID, engine kind: WineEngineKind, graphics: GraphicsBackend?, exitCode: Int32, startedAt start: Date,
+        gameID: UUID, plan: LaunchPlan, exitCode: Int32, startedAt start: Date,
         analysis: LogAnalyzer.Result, logURL: URL
     ) async {
         running[gameID] = nil
@@ -277,26 +287,34 @@ final class GameLauncher: ObservableObject {
             entry.playSeconds += duration
             entry.lastExitCode = exitCode
             entry.lastRunSucceeded = !failed
+            // 자동 starts with what worked next time
+            if !failed, entry.winePreference == .auto { entry.wineLearned = plan.engine }
+            if !failed, entry.graphicsPreference == .auto, let graphics = plan.graphics { entry.graphicsLearned = graphics }
         }
-        guard failed, let game = GameLibrary.shared.game(gameID) else { return }
-
-        // 자동: the classic engine lacks a Windows function this game calls → move it to the modern engine
-        if analysis.needsNewerEngine, kind == .classic, game.winePreference == .auto {
-            GameLibrary.shared.update(gameID) { $0.wineLearned = .modern }
-            if EngineManager.shared.isReady(.modern), let updated = GameLibrary.shared.game(gameID) {
-                GameLibrary.shared.showToastMessage(
-                    "\(game.name): 최신 엔진(Wine \(ModernEngine.wineVersion))으로 바꿔서 다시 실행할게요")
-                launch(updated)
-                return
-            }
+        guard failed, let game = GameLibrary.shared.game(gameID) else {
+            tried[gameID] = nil
+            return
         }
 
         // Missing DLLs Miro knows a package for: install them into this engine's C: drive and start again
-        if await installMissingAndRelaunch(game, engine: kind, analysis: analysis) { return }
+        if await installMissingAndRelaunch(game, plan: plan, analysis: analysis) { return }
+
+        // Another engine or graphics layer next, without asking
+        if !userStopped, !analysis.processStorm,
+           let next = LaunchPlanner.plans(for: game).first(where: { !(tried[gameID] ?? []).contains($0) }) {
+            GameLibrary.shared.update(gameID) { entry in
+                if entry.graphicsLearned == plan.graphics { entry.graphicsLearned = nil }
+                if entry.wineLearned == plan.engine, plan.engine == .classic { entry.wineLearned = nil }
+            }
+            GameLibrary.shared.showToastMessage("\(game.name): \(next.title)로 다시 실행할게요")
+            if let updated = GameLibrary.shared.game(gameID) { launch(updated, plan: next) }
+            return
+        }
+        tried[gameID] = nil
 
         var result = await buildFailure(game: game, title: "게임을 실행하지 못했어요", exitCode: exitCode,
-                                        analysis: analysis, logURL: logURL, engine: kind, graphics: graphics)
-        if analysis.needsNewerEngine, kind == .classic, !EngineManager.shared.isReady(.modern) {
+                                        analysis: analysis, logURL: logURL, engine: plan.engine, graphics: plan.graphics)
+        if analysis.needsNewerEngine, plan.engine == .classic, !EngineManager.shared.isReady(.modern) {
             result.suggestedEngine = .modern
         }
         failure = result
@@ -305,8 +323,9 @@ final class GameLauncher: ObservableObject {
 
     /// Installs the packages that provide the DLLs a failed run was missing, then relaunches the game.
     /// Returns false when there is nothing new to install or an install failed (the caller shows the sheet).
-    private func installMissingAndRelaunch(_ game: Game, engine kind: WineEngineKind,
+    private func installMissingAndRelaunch(_ game: Game, plan: LaunchPlan,
                                            analysis: LogAnalyzer.Result) async -> Bool {
+        let kind = plan.engine
         let installs = InstallCenter.shared
         let tried = autoInstalled[game.id] ?? []
         var packages: [Dependency] = []
@@ -324,7 +343,7 @@ final class GameLauncher: ObservableObject {
         await installs.installAndWait(packages, engine: kind)
         guard packages.allSatisfy({ installs.isInstalled($0.id, on: kind) }),
               let updated = GameLibrary.shared.game(game.id) else { return false }
-        launch(updated)
+        launch(updated, plan: plan)
         return true
     }
 
@@ -336,8 +355,9 @@ final class GameLauncher: ObservableObject {
                 let text = logURL.flatMap { try? String(contentsOf: $0, encoding: .utf8) } ?? ""
                 return LogAnalyzer.analyze(String(text.suffix(400_000)))
             }.value
-            let kind = EngineManager.shared.engine(for: game)
-            let graphics: GraphicsBackend? = kind == .modern ? EngineManager.shared.graphics(for: game) : nil
+            let plan = LaunchPlanner.plans(for: game).first
+            let kind = plan?.engine ?? .classic
+            let graphics = plan?.graphics
             var result = await buildFailure(game: game, title: "문제 해결 도우미", exitCode: game.lastExitCode,
                                             analysis: analysis, logURL: logURL, engine: kind, graphics: graphics)
             if (analysis.needsNewerEngine || kind == .modern) && !EngineManager.shared.isReady(.modern) {

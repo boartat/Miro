@@ -141,16 +141,14 @@ struct GameSettingsSheet: View {
     private var engineFooter: String {
         switch winePreference {
         case .auto:
-            let kind = game.wineLearned ?? .classic
-            let current = WineEngine.of(kind).title(graphics: engines.graphics(for: game))
-            return "지금은 \(current)로 실행해요. 클래식 엔진에 없는 Windows 기능을 게임이 부르면 "
-                + "Miro가 알아서 최신 엔진으로 바꿔서 다시 실행하고 기억해요."
-                + (kind == .modern ? graphicsFooter : "")
+            let current = LaunchPlanner.plans(for: game).first?.title ?? "엔진 설치 필요"
+            return "지금은 \(current)로 시작해요. 실행이 안 되면 Miro가 다른 그래픽 방식이나 엔진으로 "
+                + "알아서 바꿔 다시 실행하고, 잘 된 방식을 기억해요." + graphicsFooter
         case .classic:
             return WineEngine.classic.summary
         case .modern:
             return WineEngine.modern.summary
-                + (engines.isReady(.modern) ? "" : " 아직 설치되지 않았어요 — 실행하면 설치 안내가 나와요.")
+                + (engines.isReady(.modern) ? "" : " 아직 설치되지 않았어요. 실행하면 설치 안내가 나와요.")
                 + graphicsFooter
         }
     }
@@ -158,12 +156,18 @@ struct GameSettingsSheet: View {
     /// What the graphics choice means on this Mac right now
     private var graphicsFooter: String {
         switch graphicsPreference {
+        case .auto:
+            return " 그래픽(최신 엔진): 게임이 쓰는 DirectX 버전에 맞춰 효율이 좋은 순서로 고르고, 안 되면 다음 방식으로 넘어가요."
+        case .dxmt:
+            return " 그래픽: DXMT로 DirectX 10/11을 Metal에 바로 그려요. 가장 가볍고 빨라요."
+        case .d3dmetal:
+            return engines.d3dmetalAccepted
+                ? " 그래픽: Apple D3DMetal로 그려요. DirectX 12 게임에 써요."
+                : " 그래픽: D3DMetal은 설정 → 호환 레이어에서 Apple 라이선스에 동의해야 쓸 수 있어요."
         case .dxvk:
-            return " 그래픽: DXVK로 그려요. DirectX 9 게임이나 DXMT에서 문제가 있던 게임에 쓰세요."
-        case .auto, .dxmt:
-            return engines.dxmtReady
-                ? " 그래픽: DXMT로 DirectX 10/11을 Metal에 바로 그려요. 같은 화면에서 GPU를 DXVK의 3분의 1 정도만 써요."
-                : " 그래픽: DXMT가 아직 설치되지 않아서 DXVK로 그려요. 설정 → 호환 레이어에서 추가할 수 있어요."
+            return " 그래픽: DXVK(Vulkan 경유)로 그려요. 다른 방식에서 화면이 깨지는 게임에 써요."
+        case .wined3d:
+            return " 그래픽: Wine 기본 그래픽으로 그려요. DirectX 9 게임에 잘 맞아요."
         }
     }
 

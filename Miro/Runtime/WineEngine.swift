@@ -12,9 +12,9 @@ import WhiskyKit
 
 /// Which Wine engine runs a game.
 enum WineEngineKind: String, Codable, CaseIterable, Identifiable, Sendable {
-    /// Wine 7.7 + D3DMetal (Apple Game Porting Toolkit) — Miro's original runtime
+    /// Wine 7.7 + D3DMetal (Apple Game Porting Toolkit), Miro's original runtime
     case classic
-    /// Wine 11 (WineHQ Staging) + DXVK — newer Windows APIs, e.g. what Unity 6.3 calls at startup
+    /// Wine 11 (CrossOver 26.3 tree): newer Windows APIs, and every graphics layer
     case modern
 
     var id: String { rawValue }
@@ -22,7 +22,7 @@ enum WineEngineKind: String, Codable, CaseIterable, Identifiable, Sendable {
 
 /// The engine choice stored per game in 게임 설정.
 enum WinePreference: String, Codable, CaseIterable, Identifiable, Sendable {
-    /// Classic first; Miro switches to the modern engine by itself when the classic one is missing a function
+    /// Miro picks the engine and tries the next one when a launch fails
     case auto
     case classic
     case modern
@@ -38,31 +38,57 @@ enum WinePreference: String, Codable, CaseIterable, Identifiable, Sendable {
     }
 }
 
-/// How the modern engine turns Direct3D 10/11 into Metal.
+/// How the modern engine turns Direct3D into Metal.
 enum GraphicsBackend: String, Codable, CaseIterable, Identifiable, Sendable {
-    /// DXMT: Direct3D 10/11 straight to Metal (Miro's Wine build exports what it needs)
+    /// DXMT: Direct3D 10/11 straight to Metal
     case dxmt
+    /// Apple's D3DMetal: Direct3D 11/12 to Metal (needs the Game Porting Toolkit licence accepted)
+    case d3dmetal
     /// DXVK: Direct3D 9–11 → Vulkan → MoltenVK → Metal
     case dxvk
-
-    var id: String { rawValue }
-    var title: String { self == .dxmt ? "DXMT" : "DXVK" }
-}
-
-/// The graphics choice stored per game in 게임 설정 (only used on the modern engine).
-enum GraphicsPreference: String, Codable, CaseIterable, Identifiable, Sendable {
-    /// DXMT when it is installed, otherwise DXVK
-    case auto
-    case dxmt
-    case dxvk
+    /// Wine's own Direct3D (wined3d, and vkd3d for Direct3D 12)
+    case wined3d
 
     var id: String { rawValue }
 
     var title: String {
         switch self {
-        case .auto: return "자동 (DXMT 우선)"
-        case .dxmt: return "DXMT · Metal 직접"
-        case .dxvk: return "DXVK · Vulkan 경유"
+        case .dxmt: return "DXMT"
+        case .d3dmetal: return "D3DMetal"
+        case .dxvk: return "DXVK"
+        case .wined3d: return "Wine 기본"
+        }
+    }
+}
+
+/// The graphics choice stored per game in 게임 설정 (used on the modern engine).
+enum GraphicsPreference: String, Codable, CaseIterable, Identifiable, Sendable {
+    /// Miro's order for the game's Direct3D version, moving on when one fails
+    case auto
+    case dxmt
+    case d3dmetal
+    case dxvk
+    case wined3d
+
+    var id: String { rawValue }
+
+    var backend: GraphicsBackend? {
+        switch self {
+        case .auto: return nil
+        case .dxmt: return .dxmt
+        case .d3dmetal: return .d3dmetal
+        case .dxvk: return .dxvk
+        case .wined3d: return .wined3d
+        }
+    }
+
+    var title: String {
+        switch self {
+        case .auto: return "자동 (추천)"
+        case .dxmt: return "DXMT · DirectX 10/11"
+        case .d3dmetal: return "D3DMetal · DirectX 11/12"
+        case .dxvk: return "DXVK · DirectX 9~11"
+        case .wined3d: return "Wine 기본 · DirectX 9, 12"
         }
     }
 }
@@ -81,7 +107,7 @@ struct WineEngine: Sendable {
         kind: .classic, root: WhiskyWineInstaller.wineFolder, wineName: "wine64", bottleURL: MiroPaths.bottle
     )
     static let modern = WineEngine(
-        kind: .modern, root: ModernEngine.root, wineName: "wine", bottleURL: MiroPaths.modernBottle
+        kind: .modern, root: ModernEngine.wineRoot, wineName: "wine", bottleURL: MiroPaths.modernBottle
     )
 
     static func of(_ kind: WineEngineKind) -> WineEngine {
@@ -97,13 +123,14 @@ struct WineEngine: Sendable {
     var title: String {
         switch kind {
         case .classic: return "클래식 · Wine 7.7 + D3DMetal"
-        case .modern: return "최신 · Wine \(ModernEngine.wineVersion) + \(ModernEngine.hasDXMT ? "DXMT / DXVK" : "DXVK")"
+        case .modern: return "최신 · Wine \(ModernEngine.wineVersion)"
         }
     }
 
     /// Title for a game that runs on this engine with `graphics`
-    func title(graphics: GraphicsBackend) -> String {
-        kind == .classic ? title : "최신 · Wine \(ModernEngine.wineVersion) + \(graphics.title)"
+    func title(graphics: GraphicsBackend?) -> String {
+        guard kind == .modern, let graphics else { return title }
+        return "\(title) + \(graphics.title)"
     }
 
     var shortName: String { kind == .classic ? "클래식" : "최신" }
@@ -111,40 +138,64 @@ struct WineEngine: Sendable {
     var summary: String {
         switch kind {
         case .classic:
-            return "Apple Game Porting Toolkit. DirectX 11/12를 Metal로 바로 옮겨서 가장 빠르고, 대부분의 게임은 이걸로 충분해요."
+            return "Apple Game Porting Toolkit. 예전 Wine이지만 오래 검증됐어요. 최신 엔진에서 안 되는 게임의 마지막 예비 엔진이에요."
         case .modern:
-            return "WineHQ \(ModernEngine.wineVersion) Staging. DirectX 10/11은 DXMT(Metal로 바로), DirectX 9~11은 DXVK(Vulkan 경유)로 그려요. "
-                + "최신 Windows 기능이 필요한 게임(예: Unity 6.3)이 실행돼요. DirectX 12 전용 게임은 클래식을 쓰세요."
+            return "CrossOver 26.3 오픈소스 기반 Wine 11. DXMT·D3DMetal·DXVK·Wine 기본 그래픽을 게임마다 바꿔 끼우고, "
+                + "안 되면 다음 방식으로 알아서 넘어가요. 최신 Windows 기능이 필요한 게임(예: Unity 6.3)도 실행돼요."
         }
     }
 
     /// Environment for every Wine process of this engine (prefix, debug level, the bottle's toggles).
-    /// `graphics` picks how the modern engine draws Direct3D 10/11; the classic engine ignores it.
-    func environment(for bottle: Bottle, graphics: GraphicsBackend = .dxvk) -> [String: String] {
+    /// `graphics` picks how the modern engine draws Direct3D; the classic engine ignores it.
+    func environment(for bottle: Bottle, graphics: GraphicsBackend? = nil) -> [String: String] {
         var env = Wine.environment(for: bottle)
         env["WINEPREFIX"] = bottleURL.path(percentEncoded: false)
         guard kind == .modern else { return env }
-        switch graphics {
-        case .dxmt where ModernEngine.hasDXMT:
-            // DXMT replaces Wine's builtin d3d11/dxgi/d3d10core; DXVK's copies in system32 are skipped
-            env["WINEDLLOVERRIDES"] = Self.mergeOverrides(env["WINEDLLOVERRIDES"], "d3d11,dxgi,d3d10core,winemetal=b")
+
+        // Host libraries (FreeType, GStreamer, MoltenVK …) live in the runtime frameworks folder
+        let frameworks = ModernEngine.frameworks.path(percentEncoded: false)
+        var libraryPath = "\(frameworks):\(frameworks)/GStreamer.framework/Versions/1.0/lib"
+        var frameworkPath = frameworks
+        env["GST_PLUGIN_PATH"] = "\(frameworks)/GStreamer.framework/Versions/1.0/lib/gstreamer-1.0"
+        env["CX_FWD_COMPAT_GL_CTX"] = "1"
+        env["MVK_CONFIG_LOG_LEVEL"] = "2"
+        env["DXMT_ALLOW_CROSS_PROCESS_SWAPCHAIN"] = "1"
+        var overrides = "winemenubuilder.exe=d"
+
+        switch graphics ?? .wined3d {
+        case .dxmt:
+            env["WINEDLLPATH_PREPEND"] = ModernEngine.dxmtOverlay.path(percentEncoded: false)
             env["DXMT_SHADER_CACHE_PATH"] = MiroPaths.shaderCache.appending(path: "dxmt").path(percentEncoded: false)
-        default:
-            // DXVK's d3d11/dxgi sit in system32 as native DLLs; the engine's builtins stay as the fallback
-            env["WINEDLLOVERRIDES"] = Self.mergeOverrides(env["WINEDLLOVERRIDES"], "d3d11,dxgi,d3d10core=n,b")
+        case .d3dmetal:
+            // 32-bit Direct3D 10/11 falls through to DXMT: D3DMetal is 64-bit only
+            let external = ModernEngine.d3dmetalExternal.path(percentEncoded: false)
+            env["WINEDLLPATH_PREPEND"] = ModernEngine.d3dmetalOverlay.path(percentEncoded: false) + ":"
+                + ModernEngine.dxmtOverlay.path(percentEncoded: false)
+            env["CX_D3DMETALPATH"] = external
+            libraryPath += ":\(external)"
+            frameworkPath += ":\(external)"
+            env["DXMT_SHADER_CACHE_PATH"] = MiroPaths.shaderCache.appending(path: "dxmt").path(percentEncoded: false)
+        case .dxvk:
+            // DXVK-macOS (with its dxgi) sits in the prefix's system32 as native DLLs
+            overrides += ";dxgi,d3d10core,d3d11=n,b"
             env["DXVK_ASYNC"] = "1"
             env["DXVK_CONFIG_FILE"] = ModernEngine.dxvkFolder.appending(path: "dxvk.conf").path(percentEncoded: false)
             env["DXVK_STATE_CACHE_PATH"] = MiroPaths.shaderCache.path(percentEncoded: false)
+        case .wined3d:
+            break
         }
-        // D3DMetal-only switches mean nothing to this engine
-        for key in ["D3DM_SUPPORT_DXR", "WINEMSYNC"] { env.removeValue(forKey: key) }
+        env["DYLD_FALLBACK_LIBRARY_PATH"] = libraryPath
+        env["DYLD_FALLBACK_FRAMEWORK_PATH"] = frameworkPath
+        env["WINEDLLOVERRIDES"] = Self.mergeOverrides(env["WINEDLLOVERRIDES"], overrides)
+        if graphics != .d3dmetal { env.removeValue(forKey: "D3DM_SUPPORT_DXR") }
         return env
     }
 
     /// Extra arguments a game engine needs on this Wine engine
-    func launchArguments(for gameEngine: GameEngine) -> [String] {
-        // Unity probes D3D12 first; vkd3d on MoltenVK only offers feature level 11.0, so go straight to D3D11/DXVK
-        kind == .modern && gameEngine == .unity ? ["-force-d3d11"] : []
+    func launchArguments(for gameEngine: GameEngine, graphics: GraphicsBackend?) -> [String] {
+        // Unity probes Direct3D 12 first; only D3DMetal and Wine's vkd3d serve it, so the others get D3D11
+        guard kind == .modern, gameEngine == .unity else { return [] }
+        return graphics == .dxmt || graphics == .dxvk ? ["-force-d3d11"] : []
     }
 
     /// Runs `wine <args>` in this engine's prefix and waits for it

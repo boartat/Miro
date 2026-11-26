@@ -4,7 +4,7 @@
 
 Miro는 [Whisky](https://github.com/Whisky-App/Whisky)(© Whisky contributors, GPL-3.0)를 고쳐서 만든 프로그램이고, 전체가 **GNU GPL 3.0 이상**(`LICENSE`)으로 배포돼요. 어떠한 보증도 없어요.
 
-2026년에 Whisky에서 바꾼 내용: 앱 이름과 화면 전체(게임 라이브러리, 게임 페이지, 설정), 호환성 검사·로그 분석·라이브러리 설치 큐, 두 번째 Wine 엔진(Wine 11 + DXMT / DXVK), 런타임 설치기(Gcenx Game Porting Toolkit 빌드). 고친 Whisky 파일에는 머리말에 `Modified for Miro, 2026.`라고 적혀 있어요.
+2026년에 Whisky에서 바꾼 내용: 앱 이름과 화면 전체(게임 라이브러리, 게임 페이지, 설정), 호환성 검사·로그 분석·라이브러리 설치 큐, 두 번째 Wine 엔진(Wine 11 CrossOver 26.3 트리 + DXMT / D3DMetal / DXVK)과 실행 순서 자동 선택, 런타임 설치기(Gcenx Game Porting Toolkit 빌드). 고친 Whisky 파일에는 머리말에 `Modified for Miro, 2026.`라고 적혀 있어요.
 
 ## Miro.app 안에 들어 있는 것
 
@@ -13,16 +13,21 @@ Miro는 [Whisky](https://github.com/Whisky-App/Whisky)(© Whisky contributors, G
 | WhiskyKit, WhiskyThumbnail (Whisky) | GPL-3.0 | 이 저장소 |
 | [SemanticVersion](https://github.com/SwiftPackageIndex/SemanticVersion) 0.4.0 | Apache-2.0 (아래 전문) | GitHub |
 | [cabextract](https://www.cabextract.org.uk/) 1.11 (libmspack 포함) | GPL-3.0 이상 (libmspack은 LGPL-2.1) | 각 릴리즈에 `cabextract-1.11.tar.gz` 첨부 (SHA-256 `b5546db1155e4c718ff3d4b278573604f30dd64c3c5bfd4657cd089b823a3ac6`) |
-| Wine Mac 드라이버 `winemac.so` (Wine 11.21 Staging + Miro의 DXMT 패치, `winemac-11.21-dxmt.so.bin`) | LGPL-2.1 이상 | [Engine/winemac-dxmt](Engine/winemac-dxmt) (패치·빌드 스크립트), 각 릴리즈에 패치를 적용한 전체 Wine 소스 첨부 |
+| 게임별 호환성 데이터 (`compat-db.json`, highball-db의 게임 항목에서 추림) | CC0-1.0 | [highball-db](https://github.com/gauthierpiarrette/highball-db) (`db/games`만 사용, ODbL인 `db/derived`는 쓰지 않음) |
+
+Miro 1.1에는 DXMT용으로 고친 Wine Mac 드라이버 `winemac.so`(LGPL-2.1 이상)가 들어 있었어요. 소스는 [Engine/winemac-dxmt](Engine/winemac-dxmt)와 1.1.0 릴리즈 첨부 파일에 있어요.
 
 ## 앱이 처음 실행할 때 원래 배포처에서 내려받는 것 (Miro에는 들어 있지 않음)
 
 | 구성 요소 | 라이선스 | 받는 곳 |
 | --- | --- | --- |
 | Game Porting Toolkit 빌드 (Wine 7.7 + Apple D3DMetal) | Wine: LGPL-2.1 · D3DMetal: Apple 라이선스 (비상업적 배포만 허용, 수정 금지) | [Gcenx/game-porting-toolkit](https://github.com/Gcenx/game-porting-toolkit) |
-| Wine 11.21 Staging (MoltenVK 포함) | LGPL-2.1 · MoltenVK: Apache-2.0 | [Gcenx/macOS_Wine_builds](https://github.com/Gcenx/macOS_Wine_builds) |
+| Wine 11 (CodeWeavers CrossOver 26.3 오픈소스 트리, Highball 빌드) | LGPL-2.1 이상 | [gauthierpiarrette/highball-engine](https://github.com/gauthierpiarrette/highball-engine) (빌드 레시피·패치), [CrossOver 소스](https://www.codeweavers.com/crossover/source) |
+| 런타임 프레임워크 (GStreamer, FreeType, SDL2, MoltenVK … + Apple D3DMetal 3.0) | 각 라이선스 (LGPL, Apache-2.0, MIT …) / Apple 라이선스 | [Sikarugir-App/Template](https://github.com/Sikarugir-App/Template) |
+| MoltenVK 1.4.2 (Highball 패치) | Apache-2.0 | [gauthierpiarrette/highball](https://github.com/gauthierpiarrette/highball) |
+| 오디오 보정 라이브러리(audiobuf), 32비트 NVAPI 스텁 | MIT | [gauthierpiarrette/highball-engine](https://github.com/gauthierpiarrette/highball-engine) |
 | DXVK-macOS 1.10.3 | zlib | [Gcenx/DXVK-macOS](https://github.com/Gcenx/DXVK-macOS) |
-| DXMT v0.80 (d3d11, dxgi, d3d10core, winemetal) | MIT (v0.80까지; 이후 버전은 LGPL-2.1) | [3Shain/dxmt](https://github.com/3Shain/dxmt) |
+| DXMT (Highball 브랜치, d3d11 · dxgi · d3d10core · winemetal) | MIT | [gauthierpiarrette/highball-engine](https://github.com/gauthierpiarrette/highball-engine), 원본 [3Shain/dxmt](https://github.com/3Shain/dxmt) |
 | winetricks | LGPL-2.1 | [Winetricks/winetricks](https://github.com/Winetricks/winetricks) |
 | Visual C++, DirectX, .NET, 글꼴 등 Windows 라이브러리 | 각 배포사(대부분 Microsoft)의 라이선스 | winetricks가 공식 배포처에서 받아요 |
 | RPG Maker RTP | 각 RTP의 라이선스 | [rpgmakerweb.com](https://www.rpgmakerweb.com/run-time-package) |

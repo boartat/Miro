@@ -131,8 +131,8 @@ struct TroubleshootSheet: View {
             Spacer()
             Button("닫기") { dismiss() }
                 .keyboardShortcut(.cancelAction)
-            if failure.engine == .modern, failure.graphics == .dxmt {
-                // DXMT draws only Direct3D 10/11 and is newer than DXVK: offer the proven path
+            if failure.engine == .modern, failure.graphics != .dxvk, engines.offers(.dxvk) {
+                // Every automatic choice failed: offer the layer with the widest Direct3D coverage
                 Button("DXVK로 다시 실행") { switchGraphicsAndRelaunch(.dxvk) }
                     .disabled(isInstalling)
             }

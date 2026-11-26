@@ -9,7 +9,7 @@ Apple 실리콘 Mac용 무료 오픈소스 Windows 게임·프로그램 런처
 [![License: GPL-3.0](https://img.shields.io/badge/license-GPL--3.0-blue)](LICENSE)
 [![Latest release](https://img.shields.io/github/v/release/boartat/Miro)](https://github.com/boartat/Miro/releases/latest)
 ![Apple Silicon · macOS 14+](https://img.shields.io/badge/Apple%20Silicon-macOS%2014%2B-lightgrey)
-![Wine 11 + 7.7](https://img.shields.io/badge/Wine-11.21%20%2B%207.7-8a2be2)
+![Wine 11 + 7.7](https://img.shields.io/badge/Wine-11%20%2B%207.7-8a2be2)
 ![D3DMetal · DXMT · DXVK](https://img.shields.io/badge/graphics-D3DMetal%20%C2%B7%20DXMT%20%C2%B7%20DXVK-orange)
 
 **[⬇︎ 다운로드](#다운로드)** · [화면 둘러보기](#화면-둘러보기) · [로드맵](#로드맵) · [가져온 것과 라이선스](#가져온-것과-라이선스) · [문의](#문의) · [English](#english)
@@ -49,8 +49,8 @@ exe만 넘기는게 아니라, 게임 폴더 째로 미로에 던져넣으면 �
 - **빠진 DLL 자동 설치**
   - 실행 전에 게임 exe가 불러오는 DLL을 읽어서 필요한 라이브러리를 미리 보여 줘요.
   - 실행이 실패하면 Wine 로그에서 빠진 DLL을 찾아요. 그 DLL이 든 패키지(Visual C++, DirectX, .NET …)를 받아 설치하고 바로 다시 실행해요.
-- **엔진 자동 전환**: 클래식(Wine 7.7 + D3DMetal)으로 먼저 실행해요. 게임이 클래식에 없는 Windows 기능을 부르면 최신 엔진(Wine 11.21)으로 바꿔 다시 실행하고, 그 결과를 기억해요.
-- **DXMT 그래픽**: 최신 엔진에서 DirectX 10/11을 Metal로 바로 그려요. 같은 화면에서 GPU를 DXVK의 3분의 1 정도만 써요.
+- **엔진·그래픽 자동 선택**: 최신 엔진(Wine 11)에서 게임이 쓰는 DirectX 버전에 맞춰 가장 효율적인 그래픽 방식(DXMT·D3DMetal·DXVK·Wine 기본)으로 실행해요. 안 되면 다음 방식, 그다음엔 클래식 엔진(Wine 7.7)으로 알아서 넘어가고, 잘 된 방식을 기억해요.
+- **DirectX 9~12**: DXMT로 DirectX 10/11을 Metal로 바로 그려요(같은 화면에서 GPU를 DXVK의 3분의 1 정도만 써요). DirectX 12는 Apple D3DMetal이 맡아요.
 - **Mac 보호 안전장치**: Wine이 프로세스를 끝없이 띄우면 Mac이 멈추기 전에 Wine을 멈춰요.
 - **게임별 설정**: 효율(E코어만)·기본·성능 모드, 노치까지 채우는 전체 화면, Retina, FPS 표시, 언어, 그래픽 방식(자동·DXMT·DXVK)
 - **스팀 같은 라이브러리**: 커버 이미지, 플레이 시간, 폴더, 숨김(시크릿 박스)
@@ -98,14 +98,14 @@ exe만 넘기는게 아니라, 게임 폴더 째로 미로에 던져넣으면 �
 
 **해낸 것**
 - [x] 클래식 엔진: Wine 7.7 + D3DMetal (Apple Game Porting Toolkit)
-- [x] 최신 엔진: Wine 11.21 Staging, 실패하면 자동으로 엔진 전환
+- [x] 최신 엔진: Wine 11.21 Staging, 실패하면 자동으로 엔진 전환 (1.1)
 - [x] 최신 엔진에서 DXMT, 게임별 DXMT / DXVK
 - [x] 빠진 DLL 자동 진단·설치·재실행
 - [x] 화면 없는 그래픽 테스트와 벤치마크
 
-**진행 중**
-- [ ] **엔진 하나로 DirectX 9~12 전부**: CrossOver 26.3 오픈소스 기반 Wine 11 엔진([Highball](https://github.com/gauthierpiarrette/highball)의 공개 빌드). D3DMetal·DXMT·DXVK를 한 엔진에서 바꿔 끼워요. 화면 밖 테스트에서 DirectX 11·12, 32비트, 3분 연속 실행, Unity 마우스 API를 통과했어요.
-- [ ] **그래픽 방식 자동 순서**
+**진행 중 (다음 릴리즈)**
+- [ ] **엔진 하나로 DirectX 9~12 전부**: CrossOver 26.3 오픈소스 기반 Wine 11 엔진([Highball](https://github.com/gauthierpiarrette/highball)의 공개 빌드). D3DMetal·DXMT·DXVK·Wine 기본 그래픽을 한 엔진에서 바꿔 끼워요. 화면 밖 테스트에서 DirectX 11·12, 32비트, 3분 연속 실행, Unity 마우스 API, 이전 C: 드라이브 이어 쓰기를 통과했어요.
+- [ ] **그래픽 방식 자동 순서** (구현 완료, 앱 안 검증 중)
   - 그 게임의 검증된 방식([highball-db](https://github.com/gauthierpiarrette/highball-db), CC0)이 있으면 그것부터 써요.
   - 없으면 DirectX 버전에 맞는 효율 순서로 시도해요.
     - DirectX 12: D3DMetal → Wine 자체
@@ -155,9 +155,10 @@ exe만 넘기는게 아니라, 게임 폴더 째로 미로에 던져넣으면 �
   - 선택: .NET Framework 4.8, XNA 4.0, .NET 8 데스크톱, LAV 코덱
 - **엔진**
   - **클래식**: Gcenx가 빌드한 Apple Game Porting Toolkit 3.0 (Wine 7.7 + D3DMetal)
-  - **최신**: WineHQ 11.21 Staging (Gcenx의 공식 macOS 빌드) + DXMT v0.80 / DXVK-macOS 1.10.3
-    - 설정 → 호환 레이어에서 설치해요(약 255MB, SHA-256 확인).
-    - 예전에 설치했다면 "DXMT 추가"(약 18MB)로 DXMT를 넣어요.
+  - **최신**: CrossOver 26.3 오픈소스 기반 Wine 11 (Highball의 공개 빌드) + DXMT / D3DMetal / DXVK / Wine 기본 그래픽
+    - 설정 → 호환 레이어에서 설치해요(약 450MB, 부품마다 SHA-256 확인).
+    - 이전 최신 엔진의 C: 드라이브를 복제해서 이어 써요. 세이브가 그대로 남아요.
+    - D3DMetal은 Apple 라이선스에 동의하면 켜져요.
 - **쯔꾸르 RTP**: RPG Maker 2000/2003/XP/VX/VX Ace 공식 RTP를 앱 안에서 받아 설치해요.
 </details>
 
@@ -180,8 +181,8 @@ xcodebuild -project Miro.xcodeproj -scheme Miro -configuration Release -derivedD
 | --- | --- |
 | 라이브러리·커버·아이콘 | `~/Library/Application Support/app.miro.Miro/Library` |
 | Wine 런타임(클래식), winetricks | `~/Library/Application Support/app.miro.Miro/Libraries` |
-| 최신 엔진 (Wine 11 + DXMT / DXVK) | `…/Libraries/Engines/wine-11.21` (경로는 짧게 유지해야 해요). DXMT가 바꾼 원래 파일은 `miro/original` |
-| Windows 11 환경 (C: 드라이브) | `~/Library/Containers/app.miro.Miro/Bottles/Miro` (클래식), `…/Bottles/Miro-W11` (최신) |
+| 최신 엔진 (Wine 11 CrossOver 26.3 트리) | `…/Libraries/Engines/cx26.3` (`engine`, `frameworks`, `renderers`; 경로는 짧게 유지해야 해요) |
+| Windows 11 환경 (C: 드라이브) | `~/Library/Containers/app.miro.Miro/Bottles/Miro` (클래식), `…/Bottles/Miro-CX` (최신) |
 | 셰이더 캐시 | `~/Library/Application Support/app.miro.Miro/ShaderCache` (DXVK), `…/ShaderCache/dxmt` (DXMT) |
 | 폴더째 넣은 게임 | `…/Bottles/Miro/drive_c/Games` (= `C:\Games`) |
 | 실행·설치 로그 | `~/Library/Logs/app.miro.Miro` |
@@ -206,7 +207,7 @@ Miro 전체는 **GPL-3.0 이상**이에요. [Whisky](https://github.com/Whisky-A
 | 구성 요소 | 라이선스 | 비고 |
 | --- | --- | --- |
 | Whisky (WhiskyKit, 썸네일 확장) | GPL-3.0 | Miro의 바탕. 고친 파일에는 `Modified for Miro, 2026.` 표시 |
-| DXMT용으로 고친 Wine Mac 드라이버 `winemac.so` | LGPL-2.1 이상 | 소스: [`Engine/winemac-dxmt`](Engine/winemac-dxmt), 릴리즈마다 전체 Wine 소스 첨부 |
+| 게임별 호환성 데이터 (highball-db에서 추림) | CC0-1.0 | [`Miro/Data/compat-db.json`](Miro/Data/compat-db.json), [`Scripts/update_compat_db.swift`](Scripts/update_compat_db.swift) |
 | cabextract 1.11 (libmspack 포함) | GPL-3.0 이상 / LGPL-2.1 | 릴리즈마다 소스 첨부 |
 | SemanticVersion | Apache-2.0 | |
 
@@ -215,8 +216,11 @@ Miro 전체는 **GPL-3.0 이상**이에요. [Whisky](https://github.com/Whisky-A
 | 구성 요소 | 라이선스 | 받는 곳 |
 | --- | --- | --- |
 | Wine 7.7 + Apple D3DMetal (Game Porting Toolkit 빌드) | LGPL-2.1 / Apple 라이선스 | [Gcenx/game-porting-toolkit](https://github.com/Gcenx/game-porting-toolkit) |
-| Wine 11.21 Staging (MoltenVK 포함) | LGPL-2.1 / Apache-2.0 | [Gcenx/macOS_Wine_builds](https://github.com/Gcenx/macOS_Wine_builds) |
-| DXMT v0.80 | MIT | [3Shain/dxmt](https://github.com/3Shain/dxmt) |
+| Wine 11 (CodeWeavers CrossOver 26.3 오픈소스 트리, Highball 빌드) | LGPL-2.1 | [highball-engine](https://github.com/gauthierpiarrette/highball-engine) (빌드 레시피·패치 공개) |
+| 런타임 프레임워크 (GStreamer, MoltenVK, FreeType … + Apple D3DMetal) | 각 라이선스 (LGPL, Apache-2.0 …) / Apple 라이선스 | [Sikarugir-App/Template](https://github.com/Sikarugir-App/Template) |
+| DXMT (Highball 브랜치) | MIT | [highball-engine](https://github.com/gauthierpiarrette/highball-engine), 원본 [3Shain/dxmt](https://github.com/3Shain/dxmt) |
+| MoltenVK 1.4.2 (Highball 패치) | Apache-2.0 | [Highball](https://github.com/gauthierpiarrette/highball) |
+| 오디오 보정 라이브러리, NVAPI 스텁 | MIT | [highball-engine](https://github.com/gauthierpiarrette/highball-engine) |
 | DXVK-macOS 1.10.3 | zlib | [Gcenx/DXVK-macOS](https://github.com/Gcenx/DXVK-macOS) |
 | winetricks | LGPL-2.1 | [Winetricks/winetricks](https://github.com/Winetricks/winetricks) |
 | Visual C++, DirectX, .NET 등 | 각 배포사(대부분 Microsoft) | winetricks가 공식 배포처에서 받아요 |
@@ -228,8 +232,7 @@ Apple D3DMetal은 비상업적 배포만 허용되고 수정할 수 없어요. �
 
 | 프로젝트 | 참고한 것 |
 | --- | --- |
-| [Highball](https://github.com/gauthierpiarrette/highball) · [highball-engine](https://github.com/gauthierpiarrette/highball-engine) (GPL-3.0 / LGPL) | 엔진 조립 방식(그래픽 방식별 덮어씌우기, SHA-256 고정), 다음 엔진 후보 |
-| [highball-db](https://github.com/gauthierpiarrette/highball-db) (CC0) | 게임별 그래픽 방식 데이터 (자동 순서에 쓸 예정) |
+| [Highball](https://github.com/gauthierpiarrette/highball) (GPL-3.0) | 엔진 조립 방식(그래픽 방식별 덮어씌우기, SHA-256 고정). 앱 코드는 가져오지 않았어요 |
 | [CrossOver](https://www.codeweavers.com/crossover) 오픈소스 Wine (LGPL) | macOS용 Wine 드라이버 인터페이스 |
 | [Sikarugir](https://github.com/Sikarugir-App) · [Gcenx](https://github.com/Gcenx) | macOS용 Wine·DXVK 빌드 |
 | [WineForge](https://github.com/Alien4042x/WineForge) (LGPL) | 공식 Wine에 D3DMetal을 붙이는 다른 접근 (조사) |
@@ -248,7 +251,7 @@ Miro는 Apple, Microsoft, CodeWeavers, WineHQ, Valve, Whisky 프로젝트와 관
 **Miro** is a free, open-source (GPL-3.0) launcher for Windows games and programs on Apple Silicon Macs. Its goal: **every Windows game and program running on a Mac, without compatibility worries.** The interface is Korean for now; English is on the roadmap.
 
 - **Drop in and play.** Miro picks the Wine engine and the graphics layer, reads the game's PE imports, installs missing DLLs (Visual C++, DirectX, .NET …) and relaunches on its own.
-- **Two engines, automatic switching.** The classic engine is Wine 7.7 with D3DMetal (Game Porting Toolkit). The modern engine is WineHQ 11.21 Staging with DXMT or DXVK. A game that hits an `unimplemented function` on the classic engine moves to the modern one, and Miro remembers it.
+- **Engines and graphics picked for you.** The modern engine is Wine 11 from CodeWeavers' open-source CrossOver 26.3 tree (Highball's build), with DXMT, D3DMetal, DXVK and Wine's own Direct3D. Miro orders them by the Direct3D version a game uses, moves on by itself when one fails, falls back to the classic Wine 7.7 + D3DMetal engine last, and remembers what worked.
 - **DXMT graphics.** On the modern engine DXMT draws Direct3D 10/11 straight to Metal; at 60 FPS on the same scene it used about a third of DXVK's GPU time.
 - **Mac safety.** A process-storm guard stops Wine before it can exhaust the Mac's process table.
 - **Headless graphics tests.** [`Engine/tests`](Engine/tests) checks Direct3D 11 and 12 without showing anything on screen.

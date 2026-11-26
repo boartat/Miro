@@ -14,6 +14,7 @@ struct EngineRow: View {
     @EnvironmentObject private var engines: EngineManager
     @EnvironmentObject private var runtime: RuntimeManager
     @State private var confirmRemove = false
+    @State private var showLicense = false
 
     private var engine: WineEngine { WineEngine.of(kind) }
 
@@ -54,7 +55,7 @@ struct EngineRow: View {
                     .padding(.leading, 28)
             }
             if kind == .modern, engines.modernState == .installed {
-                dxmtRow
+                graphicsRow
                     .padding(.leading, 28)
             }
         }
@@ -99,50 +100,33 @@ struct EngineRow: View {
         }
     }
 
-    /// DXMT inside the modern engine: in use, being added, or one click away
-    @ViewBuilder
-    private var dxmtRow: some View {
-        if engines.dxmtReady {
-            Label("DXMT \(ModernEngine.dxmtVersion) 사용 중 · DirectX 10/11을 Metal로 바로 그려요",
+    /// What the modern engine can draw with, and the licence D3DMetal needs
+    private var graphicsRow: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            Label("그래픽: DXMT · DXVK · Wine 기본" + (engines.d3dmetalAccepted ? " · D3DMetal" : ""),
                   systemImage: "bolt.fill")
                 .font(.system(size: 11))
                 .foregroundStyle(Theme.secondaryText)
-        } else if engines.dxmtInstalling {
-            VStack(alignment: .leading, spacing: 3) {
-                ProgressView(value: engines.progress)
-                    .progressViewStyle(.linear)
-                    .tint(Theme.accent)
-                Text(engines.detail)
-                    .font(.system(size: 10.5))
-                    .foregroundStyle(Theme.secondaryText)
-                    .lineLimit(1)
-            }
-        } else {
-            VStack(alignment: .leading, spacing: 4) {
+            if !engines.d3dmetalAccepted {
                 HStack(spacing: 8) {
-                    Text("DXMT를 추가하면 DirectX 10/11 게임을 Metal로 바로 그려서 GPU를 덜 써요.")
+                    Text("DirectX 12 게임에는 Apple D3DMetal이 필요해요. Apple Game Porting Toolkit 라이선스에 동의하면 켜져요.")
                         .font(.system(size: 11))
                         .foregroundStyle(Theme.secondaryText)
                         .fixedSize(horizontal: false, vertical: true)
                     Spacer(minLength: 8)
                     Button {
-                        Task { await engines.installDXMT() }
+                        showLicense = true
                     } label: {
-                        Text("DXMT 추가 · \(ModernEngine.dxmtDownloadSize)")
+                        Text("D3DMetal 켜기…")
                             .font(.system(size: 11, weight: .semibold))
                     }
                     .buttonStyle(.borderedProminent)
                     .controlSize(.small)
                     .tint(Theme.accent)
                 }
-                if let error = engines.dxmtError {
-                    Text(error)
-                        .font(.system(size: 10.5))
-                        .foregroundStyle(Theme.stop)
-                        .lineLimit(2)
-                }
             }
         }
+        .sheet(isPresented: $showLicense) { D3DMetalLicenseSheet().environmentObject(engines) }
     }
 
     private func status(_ text: String, ok: Bool) -> some View {
