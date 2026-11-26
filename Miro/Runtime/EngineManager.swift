@@ -372,7 +372,7 @@ final class EngineManager: ObservableObject {
                 ? staging.appending(path: "drive_c") : staging
             let (code, output) = try await ProcessRunner.run(
                 executable: URL(fileURLWithPath: "/bin/cp"),
-                arguments: ["-c", "-R", item.path(percentEncoded: false), destination.path(percentEncoded: false)],
+                arguments: ["-c", "-R", item.commandPath, destination.commandPath],
                 environment: ProcessRunner.baseEnvironment
             )
             guard code == 0 else { throw InstallError(message: "Windows 환경 복제 실패: \(output)") }

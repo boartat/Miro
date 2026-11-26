@@ -29,7 +29,7 @@ Miro 1.1에는 DXMT용으로 고친 Wine Mac 드라이버 `winemac.so`(LGPL-2.1 
 | DXVK-macOS 1.10.3 | zlib | [Gcenx/DXVK-macOS](https://github.com/Gcenx/DXVK-macOS) |
 | DXMT (Highball 브랜치, d3d11 · dxgi · d3d10core · winemetal) | MIT | [gauthierpiarrette/highball-engine](https://github.com/gauthierpiarrette/highball-engine), 원본 [3Shain/dxmt](https://github.com/3Shain/dxmt) |
 | winetricks | LGPL-2.1 | [Winetricks/winetricks](https://github.com/Winetricks/winetricks) |
-| Visual C++, DirectX, .NET, 글꼴 등 Windows 라이브러리 | 각 배포사(대부분 Microsoft)의 라이선스 | winetricks가 공식 배포처에서 받아요 |
+| Visual C++, DirectX, .NET, 글꼴 등 Windows 라이브러리 | 각 배포사(대부분 Microsoft)의 라이선스 | Miro에 들어 있지 않아요. winetricks(버전 고정, 해시 확인)가 배포사 서버(옛 DirectX 런타임은 원본과 해시가 같은 보관본)에서 받아 SHA-256으로 확인해요 |
 | RPG Maker RTP | 각 RTP의 라이선스 | [rpgmakerweb.com](https://www.rpgmakerweb.com/run-time-package) |
 | 게임 커버 이미지 | 각 게임 저작권자 | Steam 상점 (화면 표시용으로만 사용) |
 

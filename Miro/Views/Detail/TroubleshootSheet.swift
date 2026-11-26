@@ -131,6 +131,21 @@ struct TroubleshootSheet: View {
             Spacer()
             Button("닫기") { dismiss() }
                 .keyboardShortcut(.cancelAction)
+            if let point = failure.restorePoint {
+                Button("라이브러리 설치 전으로 되돌리기") {
+                    Task {
+                        do {
+                            try await RestorePoints.restore(point)
+                            library.showToastMessage("C: 드라이브를 '\(point.reason)' 상태로 되돌렸어요")
+                        } catch {
+                            library.showToastMessage("되돌리지 못했어요: \(error.localizedDescription)")
+                        }
+                        installs.refreshInstalled()
+                    }
+                    dismiss()
+                }
+                .disabled(isInstalling)
+            }
             if failure.engine == .modern, failure.graphics != .dxvk, engines.offers(.dxvk) {
                 // Every automatic choice failed: offer the layer with the widest Direct3D coverage
                 Button("DXVK로 다시 실행") { switchGraphicsAndRelaunch(.dxvk) }

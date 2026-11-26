@@ -79,6 +79,14 @@ extension URL {
         FileManager.default.fileExists(atPath: path(percentEncoded: false))
     }
 
+    /// The path for command-line tools, without the trailing `/` that folder URLs from
+    /// `contentsOfDirectory` carry: `cp -R folder/ target` copies the folder's contents, not the folder.
+    var commandPath: String {
+        var path = path(percentEncoded: false)
+        while path.count > 1, path.hasSuffix("/") { path.removeLast() }
+        return path
+    }
+
     /// The path with the home folder abbreviated to `~`
     var abbreviatedPath: String {
         (path(percentEncoded: false) as NSString).abbreviatingWithTildeInPath

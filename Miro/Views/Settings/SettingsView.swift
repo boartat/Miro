@@ -100,9 +100,9 @@ private struct RuntimeSettings: View {
             } header: {
                 Text("엔진")
             } footer: {
-                Text("게임마다 '게임 설정 → 호환 엔진'에서 고를 수 있어요. 기본은 자동: 클래식으로 실행하다가 "
-                     + "클래식에 없는 Windows 기능이 필요하면 최신 엔진으로 바꿔요. 두 엔진은 C: 드라이브를 따로 써서 서로 영향을 주지 않아요. "
-                     + "최신 엔진의 그래픽(DXMT / DXVK)은 '게임 설정 → 그래픽'에서 골라요.")
+                Text("기본은 자동이에요. 최신 엔진에서 게임이 쓰는 DirectX 버전에 맞는 그래픽 방식부터 실행하고, 안 되면 다음 방식, "
+                     + "그다음 클래식 엔진으로 넘어가요. 게임마다 '게임 설정'에서 엔진과 그래픽을 직접 고를 수도 있어요. "
+                     + "두 엔진은 C: 드라이브를 따로 써서 서로 영향을 주지 않아요.")
                     .font(.system(size: 11))
                     .foregroundStyle(Theme.secondaryText)
             }
@@ -129,6 +129,8 @@ private struct RuntimeSettings: View {
                     .font(.system(size: 11))
                     .foregroundStyle(Theme.secondaryText)
             }
+
+            RestorePointsSection()
 
             Section("도구") {
                 HStack {

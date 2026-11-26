@@ -46,13 +46,20 @@ exe만 넘기는게 아니라, 게임 폴더 째로 미로에 던져넣으면 �
 ## 핵심 기능
 
 - **끌어다 놓으면 끝**: 게임 폴더를 창에 놓으면 등록돼요. 실행 파일이 여러 개면 알맞은 걸 골라 줘요.
-- **빠진 DLL 자동 설치**
+- **빠진 DLL, 안전하게 자동 설치**
   - 실행 전에 게임 exe가 불러오는 DLL을 읽어서 필요한 라이브러리를 미리 보여 줘요.
-  - 실행이 실패하면 Wine 로그에서 빠진 DLL을 찾아요. 그 DLL이 든 패키지(Visual C++, DirectX, .NET …)를 받아 설치하고 바로 다시 실행해요.
+  - 실행이 실패하면 Wine 로그에서 빠진 DLL을 찾아요. 아무거나 설치하지 않아요.
+    - **미리 검증한 목록만 자동으로 설치해요**: 제조사 공식 재배포 패키지(Visual C++ 2005~2022, DirectX 런타임, XAudio·XInput, PhysX, OpenAL)예요.
+    - **Windows·Wine 구성 요소를 바꾸는 패키지는 직접 눌러야 설치돼요**: .NET, Media Foundation, Visual C++ 6 등.
+    - **공식 파일만 설치해요**: [winetricks](https://github.com/Winetricks/winetricks)가 Microsoft·NVIDIA·OpenAL 서버에서 받아요. 모든 파일은 SHA-256이 원본과 같아야 설치돼요. Microsoft가 내린 옛 DirectX 런타임은 원본과 해시가 똑같은 보관본에서 받아요.
+    - **winetricks도 고정해요**: 버전과 해시를 고정해서, 스크립트가 바뀌면 실행하지 않아요.
+  - **설치 전에 복구 지점을 만들어요**: 그 엔진의 C: 드라이브를 APFS 복제로 저장해요. 순간적으로 끝나고 공간도 거의 안 써요.
+    - 설치가 실패하면 저절로 되돌려요.
+    - 설치 뒤에 문제가 생기면 문제 해결 창이나 '설정 → 호환 레이어 → 복구 지점'에서 되돌릴 수 있어요. 되돌리기 직전 상태도 저장돼서 되돌리기도 취소할 수 있어요.
 - **엔진·그래픽 자동 선택**: 최신 엔진(Wine 11)에서 게임이 쓰는 DirectX 버전에 맞춰 가장 효율적인 그래픽 방식(DXMT·D3DMetal·DXVK·Wine 기본)으로 실행해요. 안 되면 다음 방식, 그다음엔 클래식 엔진(Wine 7.7)으로 알아서 넘어가고, 잘 된 방식을 기억해요.
 - **DirectX 9~12**: DXMT로 DirectX 10/11을 Metal로 바로 그려요(같은 화면에서 GPU를 DXVK의 3분의 1 정도만 써요). DirectX 12는 Apple D3DMetal이 맡아요.
 - **Mac 보호 안전장치**: Wine이 프로세스를 끝없이 띄우면 Mac이 멈추기 전에 Wine을 멈춰요.
-- **게임별 설정**: 효율(E코어만)·기본·성능 모드, 노치까지 채우는 전체 화면, Retina, FPS 표시, 언어, 그래픽 방식(자동·DXMT·DXVK)
+- **게임별 설정**: 효율(E코어만)·기본·성능 모드, 노치까지 채우는 전체 화면, Retina, FPS 표시, 언어, 그래픽 방식(자동·DXMT·D3DMetal·DXVK·Wine 기본)
 - **스팀 같은 라이브러리**: 커버 이미지, 플레이 시간, 폴더, 숨김(시크릿 박스)
 
 ## 다운로드
@@ -101,6 +108,7 @@ exe만 넘기는게 아니라, 게임 폴더 째로 미로에 던져넣으면 �
 - [x] 최신 엔진: Wine 11.21 Staging, 실패하면 자동으로 엔진 전환 (1.1)
 - [x] 최신 엔진에서 DXMT, 게임별 DXMT / DXVK
 - [x] 빠진 DLL 자동 진단·설치·재실행
+- [x] 안전한 DLL 설치: 검증된 목록, 공식 배포처와 해시 확인, 설치 전 복구 지점과 자동 되돌리기 (1.2)
 - [x] 화면 없는 그래픽 테스트와 벤치마크
 
 **진행 중 (다음 릴리즈)**
@@ -185,6 +193,7 @@ xcodebuild -project Miro.xcodeproj -scheme Miro -configuration Release -derivedD
 | Windows 11 환경 (C: 드라이브) | `~/Library/Containers/app.miro.Miro/Bottles/Miro` (클래식), `…/Bottles/Miro-CX` (최신) |
 | 셰이더 캐시 | `~/Library/Application Support/app.miro.Miro/ShaderCache` (DXVK), `…/ShaderCache/dxmt` (DXMT) |
 | 폴더째 넣은 게임 | `…/Bottles/Miro/drive_c/Games` (= `C:\Games`) |
+| 복구 지점 (엔진마다 최근 3개, 게임 파일 제외) | `…/Bottles/.miro-restore` |
 | 실행·설치 로그 | `~/Library/Logs/app.miro.Miro` |
 
 ### 구조
@@ -250,7 +259,8 @@ Miro는 Apple, Microsoft, CodeWeavers, WineHQ, Valve, Whisky 프로젝트와 관
 
 **Miro** is a free, open-source (GPL-3.0) launcher for Windows games and programs on Apple Silicon Macs. Its goal: **every Windows game and program running on a Mac, without compatibility worries.** The interface is Korean for now; English is on the roadmap.
 
-- **Drop in and play.** Miro picks the Wine engine and the graphics layer, reads the game's PE imports, installs missing DLLs (Visual C++, DirectX, .NET …) and relaunches on its own.
+- **Drop in and play.** Miro picks the Wine engine and the graphics layer, reads the game's PE imports, installs missing DLLs and relaunches on its own.
+- **Careful library installs.** Only a vetted list of vendor redistributables (Visual C++, DirectX runtimes, XAudio/XInput, PhysX, OpenAL) is installed automatically; packages that replace Windows components (.NET, Media Foundation …) need a click. Everything comes from the vendors' own servers through a pinned, hash-checked winetricks. Before each install Miro takes an APFS-clone restore point of the C: drive, rolls back by itself if the install fails, and lets you roll back later from the troubleshooter or Settings.
 - **Engines and graphics picked for you.** The modern engine is Wine 11 from CodeWeavers' open-source CrossOver 26.3 tree (Highball's build), with DXMT, D3DMetal, DXVK and Wine's own Direct3D. Miro orders them by the Direct3D version a game uses, moves on by itself when one fails, falls back to the classic Wine 7.7 + D3DMetal engine last, and remembers what worked.
 - **DXMT graphics.** On the modern engine DXMT draws Direct3D 10/11 straight to Metal; at 60 FPS on the same scene it used about a third of DXVK's GPU time.
 - **Mac safety.** A process-storm guard stops Wine before it can exhaust the Mac's process table.

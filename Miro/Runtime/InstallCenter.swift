@@ -29,8 +29,10 @@ final class InstallCenter: ObservableObject {
     /// Installed in the modern engine's prefix
     @Published private(set) var installedModern: Set<String> = []
     @Published private(set) var currentID: String?
+    /// Restore point taken before the latest batch of installs, per engine
+    @Published private(set) var lastRestorePoint: [WineEngineKind: RestorePoint] = [:]
 
-    private var queue: [(dependency: Dependency, force: Bool, engine: WineEngineKind)] = []
+    private var queue: [(dependency: Dependency, force: Bool, engine: WineEngineKind, restorePoint: Bool)] = []
     private var worker: Task<Void, Never>?
     private var waiters: [CheckedContinuation<Void, Never>] = []
 
@@ -77,19 +79,23 @@ final class InstallCenter: ObservableObject {
         return total / Double(ids.count)
     }
 
-    func enqueue(_ dependencies: [Dependency], force: Bool = false, engine: WineEngineKind = .classic) {
+    /// Queues installs. With `restorePoint`, the engine's C: drive is saved first (once per batch) so the
+    /// change can be undone.
+    func enqueue(_ dependencies: [Dependency], force: Bool = false, engine: WineEngineKind = .classic,
+                 restorePoint: Bool = true) {
         for dependency in dependencies {
             if isActive(dependency.id) { continue }
             if !force && isInstalled(dependency.id, on: engine) { continue }
             jobs[dependency.id] = Job()
-            queue.append((dependency, force, engine))
+            queue.append((dependency, force, engine, restorePoint))
         }
         startWorkerIfNeeded()
     }
 
     /// Install and wait until the queue is empty (first-run setup, automatic installs after a failed launch)
-    func installAndWait(_ dependencies: [Dependency], engine: WineEngineKind = .classic) async {
-        enqueue(dependencies, engine: engine)
+    func installAndWait(_ dependencies: [Dependency], engine: WineEngineKind = .classic,
+                        restorePoint: Bool = true) async {
+        enqueue(dependencies, engine: engine, restorePoint: restorePoint)
         guard isBusy else { return }
         await withCheckedContinuation { continuation in
             waiters.append(continuation)
@@ -109,8 +115,9 @@ final class InstallCenter: ObservableObject {
 
     private func drain() async {
         var ranWinetricks: Set<WineEngineKind> = []
+        var saved: Set<WineEngineKind> = []
         while !queue.isEmpty {
-            let (dependency, force, kind) = queue.removeFirst()
+            let (dependency, force, kind, wantsRestorePoint) = queue.removeFirst()
             if dependency.isWinetricks { ranWinetricks.insert(kind) }
             currentID = dependency.id
             jobs[dependency.id] = Job(state: .running, progress: 0, phase: "준비 중…")
@@ -119,6 +126,16 @@ final class InstallCenter: ObservableObject {
                 jobs[dependency.id]?.state = .failed(kind == .classic
                     ? "Windows 호환 레이어가 아직 설치되지 않았어요" : "최신 엔진이 아직 설치되지 않았어요")
                 continue
+            }
+
+            // Save the C: drive once per batch, unless a game is running on it (saving stops Wine)
+            if wantsRestorePoint, !saved.contains(kind), WineEngine.of(kind).hasPrefix,
+               !GameLauncher.shared.runningEngine.values.contains(kind) {
+                saved.insert(kind)
+                jobs[dependency.id]?.phase = "설치 전 상태 저장 중…"
+                if let point = try? await RestorePoints.create(for: WineEngine.of(kind), reason: "\(dependency.name) 설치 전") {
+                    lastRestorePoint[kind] = point
+                }
             }
 
             let id = dependency.id
@@ -203,6 +220,12 @@ extension InstallCenter {
     ) async -> Result<Void, InstallError> {
         switch dependency.kind {
         case .winetricks(let verb):
+            // Only the pinned, hash-checked winetricks script ever runs
+            do {
+                try await RuntimeManager.ensureTrustedWinetricks()
+            } catch {
+                return .failure(InstallError(message: error.localizedDescription))
+            }
             return await runWinetricks(verb: verb, name: dependency.name, engine: engine, bottle: bottle,
                                        force: force, report: report)
         case .installer(let url, let isZip):

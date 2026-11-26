@@ -155,6 +155,19 @@ enum DependencyCatalog {
         "fakekorean", "fakejapanese"
     ]
 
+    /// Packages Miro may install on its own after a failed launch: vendor redistributables (Microsoft, NVIDIA,
+    /// OpenAL) that are widely used with Wine. With the winetricks script Miro pins (RuntimeManager), every file
+    /// they download carries a SHA-256 and comes from the vendor's server, except the DirectX 9 runtimes
+    /// Microsoft re-signed or took down, which come from copies with the original file's SHA-256.
+    /// Left out on purpose, so only installed when the player asks: vcrun6 (overwrites Wine's oleaut32 and
+    /// msvcrt), d3dcompiler_47 (Wine ships one; winetricks takes it from a third-party repository), .NET and
+    /// codecs that replace Wine's own components, and installers that open a window.
+    static let autoInstallIDs: Set<String> = [
+        "vcrun2022", "vcrun2013", "vcrun2012", "vcrun2010", "vcrun2008", "vcrun2005",
+        "d3dx9", "d3dx10", "d3dx11_43", "d3dcompiler_43",
+        "xact", "xinput", "directmusic", "physx", "openal"
+    ]
+
     /// Optional, slow or rarely needed — offered as a checkbox during setup
     static let extraIDs = ["dotnet48", "xna40", "dotnetdesktop8", "lavfilters"]
 

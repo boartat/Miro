@@ -31,8 +31,10 @@ struct LaunchFailure: Identifiable, Sendable {
     var engine: WineEngineKind = .classic
     /// Engine that should fix this failure, when it isn't installed yet
     var suggestedEngine: WineEngineKind?
-    /// How the failed run drew Direct3D 10/11 (modern engine only)
+    /// How the failed run drew Direct3D (modern engine only)
     var graphics: GraphicsBackend?
+    /// Saved C: drive from before Miro installed libraries for this game, to undo that install
+    var restorePoint: RestorePoint?
 }
 
 @MainActor
@@ -53,6 +55,8 @@ final class GameLauncher: ObservableObject {
     private var autoInstalled: [UUID: Set<String>] = [:]
     /// Plans tried since the player pressed 플레이 (automatic retries walk down LaunchPlanner's list)
     private var tried: [UUID: [LaunchPlan]] = [:]
+    /// Restore point from before an automatic install for a game, offered if the game still fails
+    private var installRestorePoint: [UUID: RestorePoint] = [:]
     @Published var failure: LaunchFailure?
 
     private init() {}
@@ -293,6 +297,7 @@ final class GameLauncher: ObservableObject {
         }
         guard failed, let game = GameLibrary.shared.game(gameID) else {
             tried[gameID] = nil
+            installRestorePoint[gameID] = nil
             return
         }
 
@@ -317,6 +322,7 @@ final class GameLauncher: ObservableObject {
         if analysis.needsNewerEngine, plan.engine == .classic, !EngineManager.shared.isReady(.modern) {
             result.suggestedEngine = .modern
         }
+        result.restorePoint = installRestorePoint.removeValue(forKey: gameID)
         failure = result
         NSApp.requestUserAttention(.informationalRequest)
     }
@@ -330,7 +336,9 @@ final class GameLauncher: ObservableObject {
         let tried = autoInstalled[game.id] ?? []
         var packages: [Dependency] = []
         for dll in analysis.missingDLLs {
-            guard let package = DependencyCatalog.provider(of: dll), !tried.contains(package.id),
+            // Only vetted vendor redistributables install on their own; the rest wait for the player
+            guard let package = DependencyCatalog.provider(of: dll), DependencyCatalog.autoInstallIDs.contains(package.id),
+                  !tried.contains(package.id),
                   !installs.isInstalled(package.id, on: kind), !packages.contains(where: { $0.id == package.id })
             else { continue }
             packages.append(package)
@@ -340,9 +348,24 @@ final class GameLauncher: ObservableObject {
 
         let names = packages.map(\.name).joined(separator: ", ")
         GameLibrary.shared.showToastMessage("\(game.name): 필요한 라이브러리(\(names))를 설치하고 다시 실행할게요")
+        let before = installs.lastRestorePoint[kind]
         await installs.installAndWait(packages, engine: kind)
-        guard packages.allSatisfy({ installs.isInstalled($0.id, on: kind) }),
-              let updated = GameLibrary.shared.game(game.id) else { return false }
+        let point = installs.lastRestorePoint[kind] == before ? nil : installs.lastRestorePoint[kind]
+        guard packages.allSatisfy({ installs.isInstalled($0.id, on: kind) }) else {
+            // A half-finished install is undone right away
+            if let point {
+                do {
+                    try await RestorePoints.restore(point)
+                    GameLibrary.shared.showToastMessage("설치가 끝나지 않아서 C: 드라이브를 설치 전으로 되돌렸어요")
+                } catch {
+                    GameLibrary.shared.showToastMessage("설치가 끝나지 않았어요. '설정 → 호환 레이어 → 복구 지점'에서 되돌릴 수 있어요")
+                }
+                installs.refreshInstalled()
+            }
+            return false
+        }
+        if let point { installRestorePoint[game.id] = point }
+        guard let updated = GameLibrary.shared.game(game.id) else { return false }
         launch(updated, plan: plan)
         return true
     }

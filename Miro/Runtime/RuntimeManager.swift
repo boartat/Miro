@@ -5,6 +5,7 @@
 //  First-run setup: Rosetta → Wine runtime (GPTK) → winetricks → Windows 11 prefix → libraries.
 //
 
+import CryptoKit
 import Foundation
 import SemanticVersion
 import WhiskyKit
@@ -13,7 +14,9 @@ import WhiskyKit
 final class RuntimeManager: ObservableObject {
     static let shared = RuntimeManager()
 
-    static let winetricksURL = URL(
+    /// SHA-256 of the winetricks script at that tag: a changed script is never run
+    nonisolated static let winetricksSHA256 = "431f82fc74000e6c864409f1d8fb495d696c03928808e3e8acffc45179312a7b"
+    nonisolated static let winetricksURL = URL(
         string: "https://raw.githubusercontent.com/Winetricks/winetricks/20260125/src/winetricks"
     )!
 
@@ -145,11 +148,25 @@ final class RuntimeManager: ObservableObject {
     }
 
     private func ensureWinetricks() async throws {
-        guard !MiroPaths.winetricks.fileExists else { return }
-        stepDetail[.prefix] = "winetricks 받는 중…"
-        _ = try await Downloader.download(Self.winetricksURL, to: MiroPaths.winetricks) { _, _, _ in }
-        try FileManager.default.setAttributes([.posixPermissions: 0o755],
-                                              ofItemAtPath: MiroPaths.winetricks.path(percentEncoded: false))
+        stepDetail[.prefix] = "winetricks 확인 중…"
+        try await Self.ensureTrustedWinetricks()
+    }
+
+    /// winetricks at the pinned tag, checked against its SHA-256; downloaded again when missing or changed
+    nonisolated static func ensureTrustedWinetricks() async throws {
+        let file = MiroPaths.winetricks
+        if file.fileExists, (try? sha256(of: file)) == winetricksSHA256 { return }
+        try? FileManager.default.removeItem(at: file)
+        _ = try await Downloader.download(winetricksURL, to: file) { _, _, _ in }
+        guard (try? sha256(of: file)) == winetricksSHA256 else {
+            try? FileManager.default.removeItem(at: file)
+            throw InstallError(message: "받은 winetricks가 Miro가 확인한 버전과 달라요. 안전을 위해 쓰지 않아요.")
+        }
+        try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: file.path(percentEncoded: false))
+    }
+
+    nonisolated private static func sha256(of file: URL) throws -> String {
+        SHA256.hash(data: try Data(contentsOf: file)).map { String(format: "%02x", $0) }.joined()
     }
 
     private func ensurePrefix() async throws {
@@ -188,7 +205,8 @@ final class RuntimeManager: ObservableObject {
             return
         }
         states[.libraries] = .running
-        await center.installAndWait(wanted)
+        // A brand-new C: drive: nothing to restore yet
+        await center.installAndWait(wanted, restorePoint: false)
         let failed = wanted.filter { !center.isInstalled($0.id) }
         states[.libraries] = failed.isEmpty
             ? .done
