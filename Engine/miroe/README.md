@@ -4,7 +4,7 @@ Miro의 차세대 엔진이에요. **애플 실리콘 Mac 전용 Wine 기반 엔
 
 **지금 상태 (2026-11-27)**
 - ARM64 Wine 11.22 + FEX + DXMT 연구 엔진을 빌드했어요(Hadron 기준, `scripts/`). Apple Developer 계정이 없어서 지금은 64비트 프로그램만 돌아요.
-- 첫 연구 성과 **MUMA v0**: 큰 `WRITE_DISCARD` 몰아치기 뒤 남던 GPU 메모리 920MB가 312MB로 줄었어요. 속도는 그대로예요. 자세한 건 [RESEARCH.md](RESEARCH.md)에 있어요.
+- 첫 연구 성과 **MUMA v1**: 큰 `WRITE_DISCARD` 몰아치기 뒤 남던 메모리가 버퍼 920 → 308MB, 제출을 멈춘 앱 920 → 308MB, 동적 텍스처 968 → 200MB로 줄었어요. 예비 블록은 purgeable로 표시해서 재사용할 수 있게 둔 채 메모리 사용량에서 빼요. 속도는 그대로예요. 자세한 건 [RESEARCH.md](RESEARCH.md)에 있어요.
 
 - [RESEARCH.md](RESEARCH.md): 통합 연구 엔진 계획 (합칠 프로젝트, 라이선스, 연구 과제 순위)
 - [PROBLEMS.md](PROBLEMS.md): Mac용 Wine의 알려진 문제 목록과 miroe의 방향

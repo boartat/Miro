@@ -9,7 +9,7 @@
 | `pointer-api-test.cs` | Unity 6.3이 시작할 때 부르는 `IsMouseInPointerEnabled` / `EnableMouseInPointer` | `PASS` / `FAIL …` |
 | `d3d11-bench.cs` | 무거운 셰이더와 그리기 명령 처리 속도, `soak <초>`로 연속 실행 | 1프레임당 ms |
 | `d3d11-memory-test.cs` | 32MB보다 큰 `WRITE_DISCARD`를 몰아친 뒤 메모리가 돌아오는지 ([DXMT #260](https://github.com/3Shain/dxmt/issues/260)), `Engine/miroe/tools/memwatch.sh`로 측정 | 구간별 `phase` 줄 |
-| `c/d3d11-memory-test.c` | 위 메모리 테스트의 C 버전. .NET 없이 x64·ARM64로 빌드해요(`x86_64-` / `aarch64-w64-mingw32-clang … -ld3d11`, llvm-mingw) | 구간별 `phase` 줄 |
+| `c/d3d11-memory-test.c` | 위 메모리 테스트의 C 버전. .NET 없이 x64·ARM64로 빌드해요(`x86_64-` / `aarch64-w64-mingw32-clang … -ld3d11`, llvm-mingw). 모드: `buffers`(동적 버퍼), `textures`(64MB 동적 텍스처), `small`(작은 discard 속도). 버퍼 모드는 끝에 재사용한 블록의 데이터를 읽어서 확인해요 | 구간별 `phase` 줄, `verify ok` |
 | `cjk-text-test.cs` | 한국어·일본어·중국어가 GDI+와 GDI에서 실제 글자로 그려지는지(네모 □가 아닌지), 글꼴 19개 | `PASS` / `FAIL n cases` |
 
 ## 빌드

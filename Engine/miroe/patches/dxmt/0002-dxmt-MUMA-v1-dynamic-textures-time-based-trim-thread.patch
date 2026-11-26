@@ -1,0 +1,713 @@
+From 53c05215912d725c72b0f069a82c111a0c8d537a Mon Sep 17 00:00:00 2001
+From: miroe <260228444+boartat@users.noreply.github.com>
+Date: Fri, 27 Nov 2026 02:40:58 +0900
+Subject: [PATCH] dxmt: MUMA v1 - dynamic textures, time-based trim thread,
+ purgeable spares
+
+On top of MUMA v0:
+- Dynamic linear textures (the path D3D11_USAGE_DYNAMIC 2D textures take)
+  reclaim their spares too; both resource kinds share a DynamicSpareHolder
+  base and each command queue's registry.
+- A thread per command queue trims every 250 ms instead of the finish
+  thread, so spares come back when the application stops submitting.
+  A spare is freed once the GPU is done with it and it has waited 2 s.
+- Spares of large Metal-allocated buffers are marked purgeable (volatile)
+  as soon as the GPU is done with them and made non-volatile again on
+  reuse: a discard never reads old contents, so the system may take the
+  memory back at any time while the spare stays ready for reuse. Adds
+  MTLResource_setPurgeableState to winemetal (unix call 146).
+- Registration is lock-free once a holder is registered; the trim clears
+  the flag under the holder's lock only when its queue is empty.
+- MIROE_MUMA_FREE_MS and MIROE_MUMA_PURGEABLE=0 for measurements.
+
+Engine/tests/c/d3d11-memory-test.c on ARM64 Wine + FEX, M4 Pro: after the
+burst, buffers 920 -> 308 MB, an application that stops submitting 920 ->
+308 MB (v0: 920), 64 MB dynamic textures 968 -> 200 MB (v0: 968). With
+spares kept 60 s, purgeable spares leave 609 MB reclaimable and the
+footprint at 417 MB instead of 1025 MB. Data written through reused spares
+reads back exactly; burst and small-discard speed within noise of base.
+
+Source: miroe (Miro project). License: LGPL-2.1-or-later, like DXMT.
+Written with AI assistance: per DXMT's CONTRIBUTING this is not for an
+upstream pull request.
+---
+ src/d3d11/d3d11_texture_linear.cpp  |   2 +-
+ src/dxmt/dxmt_command_queue.cpp     |  17 ++-
+ src/dxmt/dxmt_command_queue.hpp     |   8 +-
+ src/dxmt/dxmt_dynamic.cpp           | 192 ++++++++++++++++------------
+ src/dxmt/dxmt_dynamic.hpp           |  28 ++--
+ src/dxmt/dxmt_dynamic_spares.hpp    |  79 ++++++++++--
+ src/winemetal/Metal.hpp             |   5 +
+ src/winemetal/unix/winemetal_unix.c |   9 ++
+ src/winemetal/winemetal.h           |  11 ++
+ src/winemetal/winemetal_thunks.c    |  10 ++
+ 10 files changed, 248 insertions(+), 113 deletions(-)
+
+diff --git a/src/d3d11/d3d11_texture_linear.cpp b/src/d3d11/d3d11_texture_linear.cpp
+index 15c6d15..cb141ac 100644
+--- a/src/d3d11/d3d11_texture_linear.cpp
++++ b/src/d3d11/d3d11_texture_linear.cpp
+@@ -71,7 +71,7 @@ TDynamicLinearTexture(
+         memcpy(allocation->mappedMemory, pInitialData->pSysMem, bytes_per_image);
+       }
+     }
+-    dynamic_ = new DynamicLinearTexture(this->texture_.ptr(), flags);
++    dynamic_ = new DynamicLinearTexture(this->texture_.ptr(), flags, &device->GetDXMTDevice().queue().dynamic_spares);
+   }
+   Rc<StagingResource> staging(UINT) final { return nullptr; }
+   Rc<DynamicBuffer> dynamicBuffer(UINT*, UINT*) final { return {}; };
+diff --git a/src/dxmt/dxmt_command_queue.cpp b/src/dxmt/dxmt_command_queue.cpp
+index 9658c5e..01bacfa 100644
+--- a/src/dxmt/dxmt_command_queue.cpp
++++ b/src/dxmt/dxmt_command_queue.cpp
+@@ -54,7 +54,8 @@ CommandQueue::CommandQueue(WMT::Device device) :
+     cmd_library(device),
+     argument_encoding_ctx(*this, device, cmd_library),
+     initializer(device),
+-    counter_pool(device) {
++    counter_pool(device),
++    spareThread([this]() { this->SpareTrimThread(); }) {
+   for (unsigned i = 0; i < kCommandChunkCount; i++) {
+     auto &chunk = chunks[i];
+     chunk.queue = this;
+@@ -75,6 +76,7 @@ CommandQueue::CommandQueue(WMT::Device device) :
+ CommandQueue::~CommandQueue() {
+   TRACE("Destructing command queue");
+   stopped.store(true);
++  spareThread.join();
+   ready_for_encode++;
+   ready_for_encode.notify_one();
+   ready_for_commit++;
+@@ -184,6 +186,17 @@ CommandQueue::EncodingThread() {
+   return 0;
+ }
+ 
++uint32_t
++CommandQueue::SpareTrimThread() {
++  env::setThreadName("dxmt-spare-trim");
++  // independent of submissions, so spares also come back when the application stops rendering
++  while (!stopped.load()) {
++    Sleep(250);
++    dynamic_spares.trim(cpu_coherent.signaledValue());
++  }
++  return 0;
++}
++
+ uint32_t
+ CommandQueue::WaitForFinishThread() {
+   env::setThreadName("dxmt-finish-thread");
+@@ -217,8 +230,6 @@ CommandQueue::WaitForFinishThread() {
+     staging_allocator.free_blocks(internal_seq);
+     copy_temp_allocator.free_blocks(internal_seq);
+     argbuf_allocator.free_blocks(internal_seq);
+-    if ((internal_seq & 15) == 0)
+-      dynamic_spares.trim(internal_seq);
+ 
+     internal_seq++;
+   }
+diff --git a/src/dxmt/dxmt_command_queue.hpp b/src/dxmt/dxmt_command_queue.hpp
+index e27093d..64c16fe 100644
+--- a/src/dxmt/dxmt_command_queue.hpp
++++ b/src/dxmt/dxmt_command_queue.hpp
+@@ -161,6 +161,8 @@ private:
+ 
+   uint32_t WaitForFinishThread();
+ 
++  uint32_t SpareTrimThread();
++
+   std::atomic_uint64_t ready_for_encode = 1; // we start from 1, so 0 is always coherent
+   std::atomic_uint64_t ready_for_commit = 1;
+   std::atomic_uint64_t chunk_ongoing = 0;
+@@ -201,7 +203,7 @@ public:
+   std::uint64_t current_event_seq_id = 0;
+   FrameStatisticsContainer statistics;
+   ResourceInitializer initializer;
+-  /** miroe MUMA v0: dynamic buffers with spare allocations, trimmed by the finish thread */
++  /** miroe MUMA v1: dynamic resources with spare allocations, trimmed by spareThread */
+   DynamicSpareRegistry dynamic_spares;
+   CounterPool counter_pool;
+ 
+@@ -316,6 +318,10 @@ public:
+   }
+ 
+   void Retain(uint64_t seq, Allocation *allocation);
++
++private:
++  /** Declared last: starts after every other member is constructed */
++  dxmt::thread spareThread;
+ };
+ 
+ } // namespace dxmt
+\ No newline at end of file
+diff --git a/src/dxmt/dxmt_dynamic.cpp b/src/dxmt/dxmt_dynamic.cpp
+index 7c5b282..85a9c85 100644
+--- a/src/dxmt/dxmt_dynamic.cpp
++++ b/src/dxmt/dxmt_dynamic.cpp
+@@ -1,62 +1,73 @@
+ #include "dxmt_dynamic.hpp"
+ #include "dxmt_texture.hpp"
++#include <chrono>
++#include <string>
++#include "util_env.hpp"
+ 
+ namespace dxmt {
+-DynamicBuffer::DynamicBuffer(Buffer *buffer, Flags<BufferAllocationFlag> flags, DynamicSpareRegistry *spares) :
+-    buffer(buffer),
+-    flags_(flags),
+-    name_(buffer->current()),
+-    spares_(spares) {}
+-
+-DynamicBuffer::~DynamicBuffer() {
+-  if (spares_)
+-    spares_->remove(this);
++uint64_t
++DynamicSpareRegistry::now_ms() {
++  return std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now().time_since_epoch())
++      .count();
+ }
+ 
+-void
+-DynamicBuffer::registerSpares() {
+-  if (spares_)
+-    spares_->add(this);
+-}
+-
+-bool
+-DynamicBuffer::trimSpares(uint64_t coherent_seq_id) {
+-  std::lock_guard<dxmt::mutex> lock(mutex_);
+-  while (!fifo.empty() && fifo.front().will_free_at + DynamicSpareRegistry::kSpareLifetime < coherent_seq_id)
+-    fifo.pop();
+-  return fifo.empty();
++DynamicSpareRegistry::DynamicSpareRegistry() {
++  auto free_ms = env::getEnvVar("MIROE_MUMA_FREE_MS");
++  if (!free_ms.empty())
++    free_ms_ = std::stoull(free_ms);
++  purgeable_ = env::getEnvVar("MIROE_MUMA_PURGEABLE") != "0";
+ }
+ 
+ void
+-DynamicSpareRegistry::add(DynamicBuffer *buffer) {
++DynamicSpareRegistry::trim(uint64_t coherent_seq_id) {
++  auto now = now_ms();
++  // lock order: registry, then holder. Holders register only after releasing their own lock.
+   std::lock_guard<dxmt::mutex> lock(mutex_);
+-  if (!buffer->registered_) {
+-    buffers_.insert(buffer);
+-    buffer->registered_ = true;
++  for (auto it = holders_.begin(); it != holders_.end();) {
++    if ((*it)->trimSpares(coherent_seq_id, now, free_ms_, purgeable_))
++      it = holders_.erase(it);
++    else
++      ++it;
+   }
+ }
+ 
+-void
+-DynamicSpareRegistry::remove(DynamicBuffer *buffer) {
+-  std::lock_guard<dxmt::mutex> lock(mutex_);
+-  if (buffer->registered_) {
+-    buffers_.erase(buffer);
+-    buffer->registered_ = false;
+-  }
++DynamicBuffer::DynamicBuffer(Buffer *buffer, Flags<BufferAllocationFlag> flags, DynamicSpareRegistry *spares) :
++    buffer(buffer),
++    flags_(flags),
++    name_(buffer->current()),
++    spares_(spares) {
++  // DXMT flags every dynamic buffer SuballocateFromOnePage, which only applies to buffers of one page or
++  // less; a large buffer has one allocation per name, so its spares can be purgeable
++  purgeable_spares_ = buffer->length() >= DynamicSpareRegistry::kPurgeableMinSize &&
++                      !flags.test(BufferAllocationFlag::CpuPlaced);
+ }
+ 
+-void
+-DynamicSpareRegistry::trim(uint64_t coherent_seq_id) {
+-  // lock order: registry, then buffer. Buffers register only after releasing their own lock.
++DynamicBuffer::~DynamicBuffer() {
++  if (spares_)
++    spares_->remove(this);
++}
++
++bool
++DynamicBuffer::trimSpares(uint64_t coherent_seq_id, uint64_t now_ms, uint64_t free_ms, bool purgeable) {
+   std::lock_guard<dxmt::mutex> lock(mutex_);
+-  for (auto it = buffers_.begin(); it != buffers_.end();) {
+-    if ((*it)->trimSpares(coherent_seq_id)) {
+-      (*it)->registered_ = false;
+-      it = buffers_.erase(it);
+-    } else {
+-      ++it;
++  // the queue is in submission order: once an entry is still in use, so are the ones after it
++  while (!fifo.empty() && fifo.front().will_free_at <= coherent_seq_id && now_ms - fifo.front().queued_ms >= free_ms)
++    fifo.pop_front();
++  if (purgeable && purgeable_spares_) {
++    for (auto &entry : fifo) {
++      if (entry.will_free_at > coherent_seq_id)
++        break;
++      if (!entry.purgeable) {
++        // a discard never reads old contents, so the system may take the memory back at any time
++        entry.allocation->buffer().setPurgeableState(WMTPurgeableStateVolatile);
++        entry.purgeable = true;
++      }
+     }
+   }
++  if (!fifo.empty())
++    return false;
++  markUnregistered();
++  return true;
+ }
+ 
+ void
+@@ -74,20 +85,12 @@ Rc<BufferAllocation>
+ DynamicBuffer::allocate(uint64_t coherent_seq_id) {
+   std::lock_guard<dxmt::mutex> lock(mutex_);
+   Rc<BufferAllocation> ret;
+-  for (;;) {
+-    if (fifo.empty()) {
+-      break;
+-    }
+-    auto entry = fifo.front();
+-    if (entry.will_free_at > coherent_seq_id) {
+-      break;
+-    }
++  if (!fifo.empty() && fifo.front().will_free_at <= coherent_seq_id) {
++    auto &entry = fifo.front();
++    if (entry.purgeable) // contents may be gone, which is fine for a discard
++      entry.allocation->buffer().setPurgeableState(WMTPurgeableStateNonVolatile);
+     ret = std::move(entry.allocation);
+-    fifo.pop();
+-    // also drop spares that have been free for a while (the finish thread trims idle buffers the same way)
+-    while (!fifo.empty() && fifo.front().will_free_at + DynamicSpareRegistry::kSpareLifetime < coherent_seq_id)
+-      fifo.pop();
+-    break;
++    fifo.pop_front();
+   }
+   if (!ret.ptr())
+     ret = buffer->allocate(flags_);
+@@ -100,15 +103,15 @@ DynamicBuffer::updateImmediateName(uint64_t current_seq_id, Rc<BufferAllocation>
+   {
+     std::lock_guard<dxmt::mutex> lock(mutex_);
+     if (!owned_by_command_list_) {
+-      fifo.push(QueueEntry{.allocation = std::move(name_), .will_free_at = current_seq_id});
++      fifo.push_back(QueueEntry{.allocation = std::move(name_), .will_free_at = current_seq_id});
+       queued = true;
+     }
+     name_ = std::move(allocation);
+     name_suballocation_ = suballocation;
+     owned_by_command_list_ = owned_by_command_list;
+   }
+-  if (queued)
+-    registerSpares();
++  if (queued && spares_)
++    spares_->add(this);
+ }
+ 
+ void
+@@ -122,9 +125,10 @@ DynamicBuffer::recycle(uint64_t current_seq_id, Rc<BufferAllocation> &&allocatio
+         return;
+       }
+     }
+-    fifo.push(QueueEntry{.allocation = std::move(allocation), .will_free_at = current_seq_id});
++    fifo.push_back(QueueEntry{.allocation = std::move(allocation), .will_free_at = current_seq_id});
+   }
+-  registerSpares();
++  if (spares_)
++    spares_->add(this);
+ }
+ 
+ uint32_t
+@@ -135,10 +139,27 @@ DynamicBuffer::nextSuballocation() {
+   return 0;
+ }
+ 
+-DynamicLinearTexture::DynamicLinearTexture(Texture *texture, Flags<TextureAllocationFlag> flags) :
++DynamicLinearTexture::DynamicLinearTexture(Texture *texture, Flags<TextureAllocationFlag> flags, DynamicSpareRegistry *spares) :
+     texture(texture),
+     flags_(flags),
+-    name_(texture->current()) {}
++    name_(texture->current()),
++    spares_(spares) {}
++
++DynamicLinearTexture::~DynamicLinearTexture() {
++  if (spares_)
++    spares_->remove(this);
++}
++
++bool
++DynamicLinearTexture::trimSpares(uint64_t coherent_seq_id, uint64_t now_ms, uint64_t free_ms, bool) {
++  std::lock_guard<dxmt::mutex> lock(mutex_);
++  while (!fifo.empty() && fifo.front().will_free_at <= coherent_seq_id && now_ms - fifo.front().queued_ms >= free_ms)
++    fifo.pop_front();
++  if (!fifo.empty())
++    return false;
++  markUnregistered();
++  return true;
++}
+ 
+ void
+ DynamicLinearTexture::incRef() {
+@@ -155,17 +176,9 @@ Rc<TextureAllocation>
+ DynamicLinearTexture::allocate(uint64_t coherent_seq_id) {
+   std::lock_guard<dxmt::mutex> lock(mutex_);
+   Rc<TextureAllocation> ret;
+-  for (;;) {
+-    if (fifo.empty()) {
+-      break;
+-    }
+-    auto entry = fifo.front();
+-    if (entry.will_free_at > coherent_seq_id) {
+-      break;
+-    }
+-    ret = std::move(entry.allocation);
+-    fifo.pop();
+-    break;
++  if (!fifo.empty() && fifo.front().will_free_at <= coherent_seq_id) {
++    ret = std::move(fifo.front().allocation);
++    fifo.pop_front();
+   }
+   if (!ret.ptr())
+     ret = texture->allocate(flags_);
+@@ -174,24 +187,35 @@ DynamicLinearTexture::allocate(uint64_t coherent_seq_id) {
+ 
+ void
+ DynamicLinearTexture::updateImmediateName(uint64_t current_seq_id, Rc<TextureAllocation> &&allocation, bool owned_by_command_list) {
+-  std::lock_guard<dxmt::mutex> lock(mutex_);
+-  if (!owned_by_command_list_)
+-    fifo.push(QueueEntry{.allocation = std::move(name_), .will_free_at = current_seq_id});
+-  name_ = std::move(allocation);
+-  owned_by_command_list_ = owned_by_command_list;
++  bool queued = false;
++  {
++    std::lock_guard<dxmt::mutex> lock(mutex_);
++    if (!owned_by_command_list_) {
++      fifo.push_back(QueueEntry{.allocation = std::move(name_), .will_free_at = current_seq_id});
++      queued = true;
++    }
++    name_ = std::move(allocation);
++    owned_by_command_list_ = owned_by_command_list;
++  }
++  if (queued && spares_)
++    spares_->add(this);
+ }
+ 
+ void
+ DynamicLinearTexture::recycle(uint64_t current_seq_id, Rc<TextureAllocation> &&allocation) {
+-  std::lock_guard<dxmt::mutex> lock(mutex_);
+-  if (owned_by_command_list_) {
+-    if (name_.ptr() == allocation.ptr()) {
+-      owned_by_command_list_ = false;
+-      auto _ = std::move(allocation);
+-      return;
++  {
++    std::lock_guard<dxmt::mutex> lock(mutex_);
++    if (owned_by_command_list_) {
++      if (name_.ptr() == allocation.ptr()) {
++        owned_by_command_list_ = false;
++        auto _ = std::move(allocation);
++        return;
++      }
+     }
++    fifo.push_back(QueueEntry{.allocation = std::move(allocation), .will_free_at = current_seq_id});
+   }
+-  fifo.push(QueueEntry{.allocation = std::move(allocation), .will_free_at = current_seq_id});
++  if (spares_)
++    spares_->add(this);
+ }
+ 
+ } // namespace dxmt
+diff --git a/src/dxmt/dxmt_dynamic.hpp b/src/dxmt/dxmt_dynamic.hpp
+index cd35e6b..ee86753 100644
+--- a/src/dxmt/dxmt_dynamic.hpp
++++ b/src/dxmt/dxmt_dynamic.hpp
+@@ -2,11 +2,11 @@
+ #include "dxmt_buffer.hpp"
+ #include "dxmt_texture.hpp"
+ #include "dxmt_dynamic_spares.hpp"
+-#include <queue>
++#include <deque>
+ 
+ namespace dxmt {
+ 
+-class DynamicBuffer {
++class DynamicBuffer final : public DynamicSpareHolder {
+ public:
+   void incRef();
+   void decRef();
+@@ -34,12 +34,13 @@ public:
+   DynamicBuffer(Buffer *buffer, Flags<BufferAllocationFlag> flags, DynamicSpareRegistry *spares = nullptr);
+   ~DynamicBuffer();
+ 
+-  /** Frees spares the GPU has been done with for a while; true when none are left */
+-  bool trimSpares(uint64_t coherent_seq_id);
++  bool trimSpares(uint64_t coherent_seq_id, uint64_t now_ms, uint64_t free_ms, bool purgeable) override;
+ 
+   struct QueueEntry {
+     Rc<BufferAllocation> allocation;
+     uint64_t will_free_at;
++    uint64_t queued_ms = DynamicSpareRegistry::now_ms();
++    bool purgeable = false;
+   };
+ 
+   /**
+@@ -50,19 +51,17 @@ public:
+ private:
+   Flags<BufferAllocationFlag> flags_;
+   std::atomic<uint32_t> refcount_ = {0u};
+-  std::queue<QueueEntry> fifo;
++  std::deque<QueueEntry> fifo;
+   dxmt::mutex mutex_;
+   Rc<BufferAllocation> name_;
+   uint32_t name_suballocation_ = 0;
+   bool owned_by_command_list_ = false;
+   DynamicSpareRegistry *spares_ = nullptr;
+-  void registerSpares();
+-
+-  friend class DynamicSpareRegistry;
+-  bool registered_ = false; // guarded by the registry's mutex
++  /** Large Metal-allocated buffer: its spares may be marked purgeable */
++  bool purgeable_spares_ = false;
+ };
+ 
+-class DynamicLinearTexture {
++class DynamicLinearTexture final : public DynamicSpareHolder {
+ public:
+   void incRef();
+   void decRef();
+@@ -81,11 +80,15 @@ public:
+     return name_->mappedMemory;
+   }
+ 
+-  DynamicLinearTexture(Texture *buffer, Flags<TextureAllocationFlag> flags);
++  DynamicLinearTexture(Texture *buffer, Flags<TextureAllocationFlag> flags, DynamicSpareRegistry *spares = nullptr);
++  ~DynamicLinearTexture();
++
++  bool trimSpares(uint64_t coherent_seq_id, uint64_t now_ms, uint64_t free_ms, bool purgeable) override;
+ 
+   struct QueueEntry {
+     Rc<TextureAllocation> allocation;
+     uint64_t will_free_at;
++    uint64_t queued_ms = DynamicSpareRegistry::now_ms();
+   };
+   /**
+    * readonly
+@@ -95,10 +98,11 @@ public:
+ private:
+   Flags<TextureAllocationFlag> flags_;
+   std::atomic<uint32_t> refcount_ = {0u};
+-  std::queue<QueueEntry> fifo;
++  std::deque<QueueEntry> fifo;
+   dxmt::mutex mutex_;
+   Rc<TextureAllocation> name_;
+   bool owned_by_command_list_ = false;
++  DynamicSpareRegistry *spares_ = nullptr;
+ };
+ 
+ } // namespace dxmt
+diff --git a/src/dxmt/dxmt_dynamic_spares.hpp b/src/dxmt/dxmt_dynamic_spares.hpp
+index e079ba1..045deda 100644
+--- a/src/dxmt/dxmt_dynamic_spares.hpp
++++ b/src/dxmt/dxmt_dynamic_spares.hpp
+@@ -1,34 +1,89 @@
+ #pragma once
+ 
+ #include "thread.hpp"
++#include <atomic>
+ #include <cstdint>
+ #include <unordered_set>
+ 
+ namespace dxmt {
+ 
+-class DynamicBuffer;
++class DynamicSpareRegistry;
+ 
+ /**
+- * miroe MUMA v0: the dynamic buffers of one command queue that hold spare (renamed-away) allocations.
++ * miroe MUMA v1: a dynamic buffer or texture that keeps spare (renamed-away) allocations.
+  *
+- * WRITE_DISCARD renames a dynamic buffer to a fresh allocation while the GPU still reads the old one; the old
+- * one is queued as a spare for reuse. Without trimming, the spares of a burst stay allocated for the life of
+- * the buffer, and a buffer that is no longer mapped never gets to drop them (DXMT issue #260). The command
+- * queue's finish thread calls trim() with its coherent sequence id, so spares the GPU has been done with for
+- * a while are freed even when their buffer stays idle. Sequence ids are per queue, so is the registry.
++ * WRITE_DISCARD renames a dynamic resource to a fresh allocation while the GPU still reads the old one; the
++ * old one is queued as a spare for reuse. Without trimming, the spares of a burst stay allocated for the
++ * life of the resource, and a resource that is no longer mapped never drops them (DXMT issue #260).
++ */
++class DynamicSpareHolder {
++public:
++  /**
++   * Called by the registry with its lock held. Frees spares the GPU is done with that have waited at least
++   * kSpareFreeMs, and marks large ones purgeable. Returns true when no spare is left; the holder then clears
++   * its registration under its own lock (see markUnregistered).
++   */
++  virtual bool trimSpares(uint64_t coherent_seq_id, uint64_t now_ms, uint64_t free_ms, bool purgeable) = 0;
++
++protected:
++  ~DynamicSpareHolder() = default;
++  /** With the holder's lock held and its spare queue empty */
++  void
++  markUnregistered() {
++    registered_.store(false, std::memory_order_release);
++  }
++
++private:
++  friend class DynamicSpareRegistry;
++  std::atomic<bool> registered_ = false;
++};
++
++/**
++ * The holders of one command queue (sequence ids are per queue). A thread of the queue calls trim() every
++ * 250 ms, so spares come back even when the application stops submitting.
+  */
+ class DynamicSpareRegistry {
+ public:
+-  /** Spares unused for this many submissions are freed */
+-  static constexpr uint64_t kSpareLifetime = 300;
++  /** A spare the GPU is done with is freed after waiting this long (MIROE_MUMA_FREE_MS overrides) */
++  static constexpr uint64_t kSpareFreeMs = 2000;
++
++  DynamicSpareRegistry();
++  /** Spares at least this large are marked purgeable as soon as the GPU is done with them */
++  static constexpr uint64_t kPurgeableMinSize = 1u << 20;
++
++  /**
++   * After a holder queued a spare, outside the holder's lock. Lock-free when already registered: trim clears
++   * the flag under the holder's lock only when the queue is empty, so a spare queued after that sees it
++   * cleared and registers again.
++   */
++  void
++  add(DynamicSpareHolder *holder) {
++    if (holder->registered_.load(std::memory_order_acquire))
++      return;
++    std::lock_guard<dxmt::mutex> lock(mutex_);
++    if (!holder->registered_.load(std::memory_order_relaxed)) {
++      holders_.insert(holder);
++      holder->registered_.store(true, std::memory_order_release);
++    }
++  }
++
++  void
++  remove(DynamicSpareHolder *holder) {
++    std::lock_guard<dxmt::mutex> lock(mutex_);
++    if (holders_.erase(holder))
++      holder->registered_.store(false, std::memory_order_release);
++  }
+ 
+-  void add(DynamicBuffer *buffer);
+-  void remove(DynamicBuffer *buffer);
+   void trim(uint64_t coherent_seq_id);
+ 
++  static uint64_t now_ms();
++
+ private:
+   dxmt::mutex mutex_;
+-  std::unordered_set<DynamicBuffer *> buffers_;
++  std::unordered_set<DynamicSpareHolder *> holders_;
++  uint64_t free_ms_ = kSpareFreeMs;
++  /** MIROE_MUMA_PURGEABLE=0 turns purgeable spares off (for measurements) */
++  bool purgeable_ = true;
+ };
+ 
+ } // namespace dxmt
+diff --git a/src/winemetal/Metal.hpp b/src/winemetal/Metal.hpp
+index 8224a0c..a71a6b8 100644
+--- a/src/winemetal/Metal.hpp
++++ b/src/winemetal/Metal.hpp
+@@ -218,6 +218,11 @@ public:
+ 
+ class Resource : public Allocation {
+ public:
++  /** miroe MUMA v1: returns the previous state */
++  WMTPurgeableState
++  setPurgeableState(WMTPurgeableState state) {
++    return (WMTPurgeableState)MTLResource_setPurgeableState(handle, state);
++  }
+ };
+ 
+ class Texture : public Resource {
+diff --git a/src/winemetal/unix/winemetal_unix.c b/src/winemetal/unix/winemetal_unix.c
+index 2776e47..4e75232 100644
+--- a/src/winemetal/unix/winemetal_unix.c
++++ b/src/winemetal/unix/winemetal_unix.c
+@@ -1293,6 +1293,13 @@ _MTLTexture_replaceRegion(void *obj) {
+   return STATUS_SUCCESS;
+ }
+ 
++static NTSTATUS
++_MTLResource_setPurgeableState(void *obj) {
++  struct unixcall_generic_obj_uint64_uint64_ret *params = obj;
++  params->ret = [(id<MTLResource>)params->handle setPurgeableState:(MTLPurgeableState)params->arg];
++  return STATUS_SUCCESS;
++}
++
+ static NTSTATUS
+ _MTLBuffer_didModifyRange(void *obj) {
+   struct unixcall_generic_obj_uint64_uint64_ret *params = obj;
+@@ -3328,6 +3335,7 @@ const void *__wine_unix_call_funcs[] = {
+     &_MTLDevice_newIndirectCommandBuffer,
+     &_MTLDevice_newLibraryWithSource,
+     &_MTLTexture_getBytes,
++    &_MTLResource_setPurgeableState,
+ };
+ 
+ #ifndef DXMT_NATIVE
+@@ -3478,5 +3486,6 @@ const void *__wine_unix_call_wow64_funcs[] = {
+     &_MTLDevice_newIndirectCommandBuffer,
+     &_MTLDevice_newLibraryWithSource,
+     &_MTLTexture_getBytes,
++    &_MTLResource_setPurgeableState,
+ };
+ #endif
+diff --git a/src/winemetal/winemetal.h b/src/winemetal/winemetal.h
+index 97fffc7..9ef215b 100644
+--- a/src/winemetal/winemetal.h
++++ b/src/winemetal/winemetal.h
+@@ -108,6 +108,14 @@ WINEMETAL_API uint64_t MTLSharedEvent_signaledValue(obj_handle_t event);
+ 
+ WINEMETAL_API void MTLCommandBuffer_encodeSignalEvent(obj_handle_t cmdbuf, obj_handle_t event, uint64_t value);
+ 
++/* miroe MUMA v1: MTLPurgeableState */
++enum WMTPurgeableState : uint64_t {
++  WMTPurgeableStateKeepCurrent = 1,
++  WMTPurgeableStateNonVolatile = 2,
++  WMTPurgeableStateVolatile = 3,
++  WMTPurgeableStateEmpty = 4,
++};
++
+ enum WMTResourceOptions : uint64_t {
+   WMTResourceCPUCacheModeDefaultCache = 0,
+   WMTResourceCPUCacheModeWriteCombined = 1,
+@@ -1644,6 +1652,9 @@ WINEMETAL_API void MTLTexture_replaceRegion(
+ 
+ WINEMETAL_API void MTLBuffer_didModifyRange(obj_handle_t buffer, uint64_t start, uint64_t length);
+ 
++/* miroe MUMA v1: sets a resource's purgeable state and returns the previous one */
++WINEMETAL_API uint64_t MTLResource_setPurgeableState(obj_handle_t resource, uint64_t state);
++
+ WINEMETAL_API void MTLCommandBuffer_presentDrawable(obj_handle_t cmdbuf, obj_handle_t drawable);
+ 
+ WINEMETAL_API void
+diff --git a/src/winemetal/winemetal_thunks.c b/src/winemetal/winemetal_thunks.c
+index 42286c9..23e9418 100644
+--- a/src/winemetal/winemetal_thunks.c
++++ b/src/winemetal/winemetal_thunks.c
+@@ -466,6 +466,16 @@ MTLTexture_replaceRegion(
+   UNIX_CALL(45, &params);
+ }
+ 
++WINEMETAL_API uint64_t
++MTLResource_setPurgeableState(obj_handle_t resource, uint64_t state) {
++  struct unixcall_generic_obj_uint64_uint64_ret params;
++  params.handle = resource;
++  params.arg = state;
++  params.ret = 0;
++  UNIX_CALL(146, &params);
++  return params.ret;
++}
++
+ WINEMETAL_API void
+ MTLBuffer_didModifyRange(obj_handle_t buffer, uint64_t start, uint64_t length) {
+   struct unixcall_generic_obj_uint64_uint64_ret params;
+-- 
+2.54.0 (Apple Git-157)
+
