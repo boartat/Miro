@@ -10,6 +10,8 @@ These build the miroe research engine in `/Users/Shared/miroe-lab` (a short path
 | `build-wine.sh` | Wine, with llvm-mingw's clang/lld for the Windows side (Hadron uses Homebrew LLVM) |
 | `build-dxmt-variant.sh <name> <source>` | Clones the dev engine and builds a DXMT source tree into it, for A/B tests |
 | `run.sh <log> <program>` | Runs a Windows program on the engine with every window kept off screen |
+| `game-matrix.sh`, `game-report.py`, `game-repeats.py` | The game-like test (`Engine/tests/c/d3d11-game-test.c`) on each DXMT variant, with memory sampling and per-phase frame times |
+| `v2-matrix.sh`, `v2-report.py` | MUMA v2 checks: regressions against v1, the game-like test, and a simulated 800 MB budget (`MIROE_MUMA_BUDGET_MB`) |
 
 Needs: Xcode with its Metal Toolchain, Homebrew `cmake ninja meson pkg-config bison freetype`.
 

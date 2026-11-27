@@ -19,6 +19,7 @@ miroe는 이미 문제를 풀고 있는 오픈소스 프로젝트들의 결과�
 | [MetalSharp Wine](https://github.com/metalsharp/MetalSharp-Wine) | Wine 변경(16K 페이지, TEB, JIT 메모리 보호, 시작 속도 등), FEX 포크, Mullion(DXMT 포크) | Wine 변경 LGPL-2.1+, FEX MIT, Mullion LGPL-2.1+. **스크립트·문서 등 자체 통합 코드는 AGPL-3.0이라 가져오지 않아요** |
 | [WineForge](https://github.com/Alien4042x/WineForge) | macOS 수정, msync(USync) | LGPL-2.1+ |
 | [mtld3d](https://github.com/athei/mtld3d) | D3D9 → Metal | zlib |
+| [DXVK](https://github.com/doitsujin/dxvk) | MUMA v2의 메모리 정책 참고 (`src/dxvk/dxvk_memory.cpp`). 코드는 복사하지 않음 | zlib |
 | Miro Metal Bridge (우리) | Intel용 공식 Wine에서 DXMT | LGPL-2.1+ |
 
 **규칙**
@@ -146,6 +147,34 @@ ARM64 Wine + FEX + DXMT, 경우마다 3번 실행한 평균(± 범위의 절반)
 - 교전 중 최대 메모리는 세 경우 모두 비슷해요(1,045~1,226MB). **MUMA는 교전 중 최대치를 낮추지 않고, 교전 뒤에 돌려줘요.** 한 번 30초 유지가 더 낮게 나왔지만 반복하니 사라졌어요.
 - 이 DXMT 버전에서는 #260 1부(스테이징 할당기의 "forced to allocate" 경고)가 나오지 않았어요(모든 실행에서 0건). 남은 건 MUMA가 다루는 동적 버퍼 문제예요.
 - 30초 유지 설정은 메모리 사용량이 2초 회수와 같았어요(purgeable 덕분). 하지만 이 테스트에서는 속도 이득도 보이지 않았어요.
+
+#### 결과: MUMA v2, DXVK 참고 (2026-11-27)
+
+**MUMA v2** ([`patches/dxmt/0003`](patches/dxmt), v1 위에 적용)는 [DXVK](https://github.com/doitsujin/dxvk)(zlib) 메모리 할당기의 검증된 정책을 더했어요. DXVK 코드를 복사하지 않고, 정책을 DXMT 구조에 맞게 다시 구현했어요. 코드 주석에 DXVK 파일과 함수 이름을 적었어요.
+
+| | 어디서 | 내용 |
+| --- | --- | --- |
+| 가져온 것 | DXVK `src/dxvk/dxvk_memory.cpp` `freeEmptyChunksInPool` | 유휴 메모리 한도. DXVK는 mapped 메모리를 최대 크기 청크 4개(4×256MB)까지 둬요. 우리는 `min(1GB, 예산/8)` |
+| 가져온 것 | 같은 파일 `updateMemoryHeapBudgets` | 예산 = Metal `recommendedMaxWorkingSetSize` − 1%(4~256MB). 예산을 넘으면 유휴 예비 블록을 모두 풀고, 새 할당 전에 `makeRoom()`이 먼저 자리를 만들어요 |
+| 가져온 것 | 같은 파일 (한 번에 청크 하나) | 시간 규칙은 한 번에 최대 256MB만 풀어요 |
+| MUMA 고유 | | 제출과 상관없는 회수 스레드(DXVK의 timed task는 제출 직후에만 돌아요, `dxvk_queue.cpp`), purgeable, 잠금 없는 등록, 동적 텍스처, 2초 규칙 |
+
+측정용 스위치: `MIROE_MUMA_MAX_IDLE_MB`, `MIROE_MUMA_BUDGET_MB`(작은 Mac 흉내). 이 Mac(M4 Pro 24GB)의 예산은 18,004MB예요. 스크립트: [`scripts/v2-matrix.sh`](scripts/v2-matrix.sh), [`scripts/v2-report.py`](scripts/v2-report.py).
+
+**회귀 (v1과 같아야 함)**: 버퍼 308MB, 제출 멈춤 308MB, 텍스처 196MB(GPU 메모리). 재사용 데이터 확인 통과. 작은 discard 3.243ms/프레임(v1 3.262).
+
+**게임 비슷한 테스트** (경우마다 3번, 모두 유효)
+
+| | 교전 1 뒤 / 메뉴 (MB) | 교전 중 최대 1 / 2 (MB, 평균) | 교전 2 최대의 범위 | 교전 1 평균 / p99 (ms) | 교전 2 평균 / p99 / 최대 (ms) |
+| --- | --- | --- | --- | --- | --- |
+| v2, 기본 예산 | 645 / 629 | 1,116 / 1,193 | 1,052~1,334 | 1.20 / 6.77 | 1.60 / 8.40 / 11.0 |
+| v1, 예산 800MB 흉내 | 645 / 627 | 1,094 / 1,213 | 1,046~1,365 | 1.17 / 6.31 | 1.47 / 8.25 / 11.0 |
+| **v2, 예산 800MB 흉내** | 649 / 634 | **1,061 / 1,156** | **1,153~1,157** | 1.23 / 6.51 | 1.60 / **7.88 / 10.1** |
+
+- 기본 예산에서는 v2가 v1과 같아요. 큰 Mac에서는 예산 규칙이 끼어들 일이 없어요.
+- 예산 800MB에서는 교전 중 최대치가 평균 3~5% 낮아졌고, **실행마다 튀던 최대치(최대 1,365MB)가 1,157MB 안으로 고르게 묶였어요.**
+- 대가는 보이지 않았어요. 프레임 시간 차이는 실행마다의 범위 안이에요.
+- 교전 중 최대치의 대부분은 지금 쓰는 메모리라서, 회수 정책으로는 더 줄일 수 없어요. 작은 Mac(8GB 등)에서 실제 메모리 압력 아래 확인은 남아 있어요.
 
 **남은 일**
 - 실제 게임 패턴 테스트는 위처럼 첫 버전이 생겼어요. 더 다양한 엔진의 업로드 패턴(Unity, Unreal)을 더해야 해요.

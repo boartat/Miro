@@ -15,7 +15,7 @@ Miro는 [Whisky](https://github.com/Whisky-App/Whisky)(© Whisky contributors, G
 | [cabextract](https://www.cabextract.org.uk/) 1.11 (libmspack 포함) | GPL-3.0 이상 (libmspack은 LGPL-2.1) | 각 릴리즈에 `cabextract-1.11.tar.gz` 첨부 (SHA-256 `b5546db1155e4c718ff3d4b278573604f30dd64c3c5bfd4657cd089b823a3ac6`) |
 | 게임별 호환성 데이터 (`compat-db.json`, highball-db의 게임 항목에서 추림) | CC0-1.0 | [highball-db](https://github.com/gauthierpiarrette/highball-db) (`db/games`만 사용, ODbL인 `db/derived`는 쓰지 않음) |
 
-`Engine/miroe/scripts`의 빌드 스크립트 일부는 [Hadron](https://github.com/Broyojo/hadron)의 스크립트를 가져오거나 고친 것이에요(Copyright (c) 2026 David Andrews, BSD 계열 라이선스, `Engine/miroe/scripts/LICENSE.hadron`). `Engine/miroe/patches/dxmt`의 패치는 DXMT와 같은 LGPL-2.1 이상이에요. miroe 연구 엔진 자체는 아직 Miro 앱에 들어 있지 않아요.
+`Engine/miroe/scripts`의 빌드 스크립트 일부는 [Hadron](https://github.com/Broyojo/hadron)의 스크립트를 가져오거나 고친 것이에요(Copyright (c) 2026 David Andrews, BSD 계열 라이선스, `Engine/miroe/scripts/LICENSE.hadron`). `Engine/miroe/patches/dxmt`의 패치는 DXMT와 같은 LGPL-2.1 이상이에요. 그중 MUMA v2(`0003`)는 [DXVK](https://github.com/doitsujin/dxvk)(zlib, Copyright (c) 2017 Philip Rebohle 외)의 메모리 정책(유휴 한도, 예산, 한 번에 푸는 양)을 참고했어요. DXVK 코드를 복사하지 않았어요. miroe 연구 엔진 자체는 아직 Miro 앱에 들어 있지 않아요.
 
 Miro 1.1에는 Miro Metal Bridge, 곧 DXMT용으로 고친 Wine Mac 드라이버 `winemac.so`(LGPL-2.1 이상)가 들어 있었어요. 소스는 [Engine/miro-metal-bridge](Engine/miro-metal-bridge)와 1.1.0 릴리즈 첨부 파일에 있어요.
 
