@@ -23,7 +23,7 @@ Mac용 Wine에 남아 있던 병목을 직접 재고, 고치고, 다시 쟀어�
 | --- | --- |
 | **동적 리소스 메모리가 돌아오지 않음** ([DXMT #260](https://github.com/3Shain/dxmt/issues/260)) | 몰아치기 뒤 GPU 메모리 **920 → 308MB (−67%)**, 동적 텍스처 **968 → 196MB (−80%)**. 게임형 테스트에서 교전 뒤 GPU 메모리 **−48~59%**. 속도 손해 없음 (MUMA) |
 | **32비트 게임이 슬라이드쇼가 됨** ([DXMT #161](https://github.com/3Shain/dxmt/issues/161), Intel Wine + Rosetta) | 원인을 찾아 고쳐서 같은 시간에 **35 → 1,997프레임 (57배)**. `NX_COMPAT`가 있는 정상 경우와 같은 속도 |
-| **D3DMetal 없이 DirectX 12** | ARM64 네이티브 Wine + FEX 위에서 [Mullion](https://github.com/dttdrv/mullion)으로 **D3D12 기능 수준 12_2**. 그리기·텍스처·컴퓨트 셰이더(SM 5.0) 결과 모두 정확 |
+| **D3DMetal 없이 DirectX 12** | ARM64 네이티브 Wine + FEX 위에서 [Mullion](https://github.com/dttdrv/mullion)으로 **D3D12 기능 수준 12_2, 셰이더 모델 6.7**. SM 5.0과 SM 6.0~6.6(웨이브 연산, 16비트, 디스크립터 힙 직접 접근) 셰이더 결과 모두 정확 |
 | **한중일 글자가 네모로 나옴** | 다운로드 없이 Mac 글꼴을 연결해서 실패 **140 → 8개** (152개 중) |
 | **Rosetta에서 시간이 어디에 쓰이나** | Wine 자체는 **1% 미만**, Rosetta가 번역한 Metal·GPU 드라이버가 **46~53%**. 그래서 ARM64 네이티브 엔진으로 가요 |
 | **그래픽 효율** (Miro 1.1+) | 같은 장면에서 DXMT가 DXVK보다 **GPU를 약 3분의 1만** 써요 |
@@ -106,7 +106,7 @@ miroe의 실습실 빌드 스크립트는 [`Engine/miroe/scripts`](Engine/miroe/
 **Results** (neutral test programs on an M4 Pro, macOS 27; real games may differ; methods and data in [`Engine/miroe`](Engine/miroe)):
 - Dynamic-resource memory after a burst ([DXMT #260](https://github.com/3Shain/dxmt/issues/260)): **920 → 308 MB** (dynamic textures 968 → 196 MB), GPU memory after fights in a game-like test **−48 to −59%**, no speed cost.
 - 32-bit programs without `NX_COMPAT` under Rosetta ([DXMT #161](https://github.com/3Shain/dxmt/issues/161)): **35 → 1,997 frames** in the same time, by giving pages execute permission only when code runs.
-- Direct3D 12 at **feature level 12_2 without D3DMetal** on ARM64 Wine + FEX; draw, texture and compute shader (SM 5.0) results exact.
+- Direct3D 12 at **feature level 12_2 without D3DMetal** on ARM64 Wine + FEX; shader model 6.7; SM 5.0 and SM 6.0-6.6 shaders (waves, 16-bit types, descriptor heap indexing) give exact results.
 - CJK text without downloading fonts: failures **140 → 8** of 152.
 
 Built on Whisky, Wine, DXMT, Mullion, DXVK, FEX, Hadron, Highball, MoltenVK, Gcenx's builds, winetricks and Apple's Game Porting Toolkit; see [`THIRD_PARTY_NOTICES.md`](THIRD_PARTY_NOTICES.md). Contact: [issues](https://github.com/boartat/Miro/issues) or [minjae@ovqo.dev](mailto:minjae@ovqo.dev).

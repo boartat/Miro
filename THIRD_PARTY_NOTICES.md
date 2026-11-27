@@ -15,9 +15,20 @@ Miro는 [Whisky](https://github.com/Whisky-App/Whisky)(© Whisky contributors, G
 | [cabextract](https://www.cabextract.org.uk/) 1.11 (libmspack 포함) | GPL-3.0 이상 (libmspack은 LGPL-2.1) | 각 릴리즈에 `cabextract-1.11.tar.gz` 첨부 (SHA-256 `b5546db1155e4c718ff3d4b278573604f30dd64c3c5bfd4657cd089b823a3ac6`) |
 | 게임별 호환성 데이터 (`compat-db.json`, highball-db의 게임 항목에서 추림) | CC0-1.0 | [highball-db](https://github.com/gauthierpiarrette/highball-db) (`db/games`만 사용, ODbL인 `db/derived`는 쓰지 않음) |
 
-`Engine/miroe/scripts`의 빌드 스크립트 일부는 [Hadron](https://github.com/Broyojo/hadron)의 스크립트를 가져오거나 고친 것이에요(Copyright (c) 2026 David Andrews, BSD 계열 라이선스, `Engine/miroe/scripts/LICENSE.hadron`). `Engine/miroe/patches/dxmt`의 패치는 DXMT와 같은 LGPL-2.1 이상이에요. 그중 MUMA v2(`0003`)는 [DXVK](https://github.com/doitsujin/dxvk)(zlib, Copyright (c) 2017 Philip Rebohle 외)의 메모리 정책(유휴 한도, 예산, 한 번에 푸는 양)을 참고했어요. DXVK 코드를 복사하지 않았어요. `Engine/miroe/patches/mullion`은 [Mullion](https://github.com/dttdrv/mullion)(DXMT 포크, LGPL-2.1 이상) 위의 패치이고, 그중 `0001`은 Hadron의 DXMT 패치를 그대로 쓴 거예요. `Engine/miroe/patches/wine-x86_64`는 Wine(LGPL-2.1 이상) 위의 패치예요. miroe 연구 엔진 자체는 아직 Miro 앱에 들어 있지 않아요.
-
 Miro 1.1에는 Miro Metal Bridge, 곧 DXMT용으로 고친 Wine Mac 드라이버 `winemac.so`(LGPL-2.1 이상)가 들어 있었어요. 소스는 [Engine/miro-metal-bridge](Engine/miro-metal-bridge)와 1.1.0 릴리즈 첨부 파일에 있어요.
+
+### miroe 연구 엔진 (`Engine/miroe`, Miro 앱에는 아직 들어 있지 않음)
+
+| 경로 | 출처와 라이선스 |
+| --- | --- |
+| `Engine/miroe/scripts` 일부 (`stage1.sh`, `stage2*.sh`, `build-wine.sh`) | [Hadron](https://github.com/Broyojo/hadron)의 스크립트를 가져오거나 고침. Copyright (c) 2026 David Andrews, BSD 3-Clause ([`LICENSE.hadron`](Engine/miroe/scripts/LICENSE.hadron)) |
+| `Engine/miroe/patches/dxmt` | [DXMT](https://github.com/3Shain/dxmt) 위의 패치, LGPL-2.1 이상. MUMA v2(`0003`)는 [DXVK](https://github.com/doitsujin/dxvk)(zlib, Copyright (c) 2017 Philip Rebohle 외)의 메모리 정책(유휴 한도, 예산, 한 번에 푸는 양)을 참고했어요. DXVK 코드를 복사하지 않았어요 |
+| `Engine/miroe/patches/mullion` | [Mullion](https://github.com/dttdrv/mullion)(DXMT 포크) 위의 패치, LGPL-2.1 이상. `0001`은 Hadron의 DXMT 패치를 그대로 쓴 거예요(Copyright (c) 2026 David Andrews, Hadron의 패치는 고치는 프로젝트의 라이선스를 따라요) |
+| `Engine/miroe/patches/wine-x86_64` | [Wine](https://www.winehq.org) 위의 패치, LGPL-2.1 이상 |
+| `Engine/miroe/patches/experiments` | 비교용. DXMT #260 제보자가 글로 설명한 변경을 miroe가 구현한 것(코드 복사 없음), LGPL-2.1 이상 |
+| 나머지 (`Engine/miroe`의 문서·도구·스크립트, `Engine/tests`) | Miro와 같은 GPL-3.0 이상 |
+
+`Engine/tests/c/sm6`의 셰이더는 Microsoft [DXC](https://github.com/microsoft/DirectXShaderCompiler)(LLVM 라이선스 + Microsoft 라이선스)로 컴파일해요. DXC와 컴파일된 셰이더는 저장소에 들어 있지 않아요.
 
 ## 앱이 처음 실행할 때 원래 배포처에서 내려받는 것 (Miro에는 들어 있지 않음)
 
@@ -439,9 +450,7 @@ GPL-3.0 전문은 [`LICENSE`](LICENSE)에 있어요.
     limitations under the License.
 
 
-
 ## Runtime Library Exception to the Apache 2.0 License: ##
-
 
     As an exception, if you use this Software to compile your source code and
     portions of this Software are embedded into the binary product as a result,

@@ -5,9 +5,10 @@ Subject: [PATCH 1/2] build: Find mingw-w64's __icall_helper_arm64ec before
  winecrt0's (from Hadron dxmt 0003)
 
 
-Taken unchanged from Hadron's patches/dxmt/0003 (Broyojo, https://github.com/Broyojo/hadron,
+Taken unchanged from Hadron's patches/dxmt/0003 (https://github.com/Broyojo/hadron,
 commit 17aa4d6c), which fixes the same link failure in DXMT's ARM64X build.
-License: LGPL-2.1-or-later, like Mullion.
+Copyright (c) 2026 David Andrews. Hadron's patches carry the license of the project
+they modify: LGPL-2.1-or-later, like DXMT and Mullion.
 ---
  build-arm64ec.txt | 7 +++++--
  1 file changed, 5 insertions(+), 2 deletions(-)

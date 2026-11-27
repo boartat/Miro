@@ -4,6 +4,10 @@ Date: Fri, 27 Nov 2026 01:53:49 +0900
 Subject: [PATCH] exp: DXMT #260 reporter's proposal (dynamic fifo drain,
  oversized staging blocks)
 
+For comparison only. Written by miroe from the change that Ghostkwebb describes in
+prose in https://github.com/3Shain/dxmt/issues/260 (no code was copied); it is not
+one of miroe's fixes (see patches/dxmt for those).
+License: LGPL-2.1-or-later, like DXMT.
 ---
  src/dxmt/dxmt_dynamic.cpp             |  5 +++++
  src/dxmt/dxmt_ring_bump_allocator.hpp | 11 ++++++-----
