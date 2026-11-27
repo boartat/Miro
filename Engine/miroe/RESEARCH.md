@@ -201,6 +201,10 @@ ARM64 엔진을 만든 뒤 `tools/profile.sh`로 재요. 네이티브 프로세�
   - 우회책: PE 헤더에 `NX_COMPAT`를 넣는 방식이 있어요.
 - **연구 방향**: DXMT 개발자가 제시한 방향이에요. 프로세스 전체 DEP 정책을 바꾸지 않고, DXMT가 Wine을 통해 할당하는 placed buffer 메모리만 실행 불가로 만들어요. Wine의 32비트 주소 관리(WoW64)와 같이 봐야 해요.
 
+#### MUMA on Mullion (2026-11-27)
+
+miroe의 기본 그래픽 백엔드를 Mullion으로 정하면서 MUMA v2를 Mullion에 옮겼어요([`patches/mullion/0002`](patches/mullion)). Mullion 원래도 DXMT와 같이 예비 블록을 회수하지 않아서 #260이 그대로였고(923MB), 이식판은 DXMT판과 같은 결과예요(308MB, 텍스처 199MB, 게임형 테스트에서 GPU −48~53%). Mullion의 하트비트(residency set)가 purgeable 예비 블록을 계속 상주시키는 충돌을 찾아서 고쳤어요. 자세한 표와 Mullion 메모리 관리와의 관계는 [BASE.md](BASE.md) 5장에 있어요.
+
 #### 결과: W1, DEP가 꺼진 32비트 프로그램의 지연 실행 권한 (2026-11-27)
 
 > **Intel Wine + Rosetta에서의 독립 연구 성과로 보존해요.** Miro 1.2의 x86_64 엔진에는 넣지 않아요. ARM64 네이티브에서는 W^X 때문에 같은 조건(쓰기+실행 메모리 위의 Metal 버퍼)이 생기지 않을 것으로 보고, 실제 32비트 확인은 서명 권한이 생긴 뒤에 해요. 문제가 없으면 이 패치는 miroe에 넣지 않아요([BASE.md](BASE.md) 4장).

@@ -1,0 +1,971 @@
+From 05a4bd76fc61696377aa31a7d45dbdc24cac9dfb Mon Sep 17 00:00:00 2001
+From: miroe <260228444+boartat@users.noreply.github.com>
+Date: Fri, 27 Nov 2026 13:04:27 +0900
+Subject: [PATCH] mullion: MUMA v2 - reclaim spares of dynamic resources (port
+ from DXMT)
+
+The spare allocations a WRITE_DISCARD renames away are kept in each dynamic
+resource's queue for reuse and were never freed: after a burst, the memory
+stays allocated for the rest of the process (DXMT #260, the same in
+Mullion). This ports miroe's MUMA v2 from DXMT (patches/dxmt/0001-0003 in
+the Miro repository):
+- a registry per command queue and a thread that trims every 250 ms,
+  independent of submissions: a spare the GPU is done with is freed after
+  2 s; past an idle limit of min(1 GB, budget / 8) or over the budget,
+  idle spares are freed whatever their age, and before a new large
+  allocation that would pass the budget (policy after DXVK's allocator,
+  src/dxvk/dxvk_memory.cpp, zlib; no DXVK code copied);
+- large Metal-allocated spares are purgeable while idle
+  (MTLResource_setPurgeableState, WMTUnixResourceSetPurgeableState);
+- dynamic linear textures take part too.
+
+What differs from the DXMT version, for Mullion:
+- the budget is Mullion's memory::Budget (95% of the working set, lower
+  under macOS memory pressure) instead of the working set minus 1%;
+- an allocation may hold several names (Mullion's doubling within a
+  staging block), so a spare counts its own bytes;
+- a purgeable spare leaves the residency heartbeat's set and rejoins it
+  when reused: kept in the set, the heartbeat's requestResidency keeps it
+  resident and purgeable spares save nothing (measured: 923 MB with,
+  308 MB without, spares kept 60 s; MIROE_MUMA_KEEP_HEARTBEAT=1);
+- the trim thread starts once the registry knows the device.
+
+ARM64 Wine + FEX, M4 Pro, macOS 27.2, Engine/tests/c (GPU memory after
+the burst): buffers 923 -> 308 MB, an application that stops submitting
+923 -> 308 MB, 64 MB dynamic textures 971 -> 199 MB, reused data verified.
+Game-like test, 3 runs: after the first fight 584 -> 303 MB, in the menu
+629 -> 294 MB; fight frame times within run spread (fight2 p99 9.83 ->
+8.19 ms). Small discards, 5 interleaved runs: 3.117 -> 3.136 ms/frame
+(ranges 3.067-3.159 and 3.064-3.219: no measurable difference).
+
+Source: miroe (Miro project). License: LGPL-2.1-or-later, like Mullion.
+Written with AI assistance and reviewed by measurement; not submitted.
+---
+ src/d3d11/d3d11_buffer.cpp             |   2 +-
+ src/d3d11/d3d11_texture_dynamic.cpp    |   2 +-
+ src/d3d11/d3d11_texture_linear.cpp     |   2 +-
+ src/mullion/mullion_buffer.cpp         |  18 ++
+ src/mullion/mullion_buffer.hpp         |  12 +
+ src/mullion/mullion_command_queue.cpp  |  15 ++
+ src/mullion/mullion_command_queue.hpp  |  10 +
+ src/mullion/mullion_dynamic.cpp        | 318 ++++++++++++++++++++-----
+ src/mullion/mullion_dynamic.hpp        |  33 ++-
+ src/mullion/mullion_dynamic_spares.hpp | 141 +++++++++++
+ src/winemetal/Metal.hpp                |   5 +
+ src/winemetal/unix/winemetal_unix.c    |   9 +
+ src/winemetal/winemetal.h              |  14 +-
+ src/winemetal/winemetal_thunks.c       |  10 +
+ 14 files changed, 527 insertions(+), 64 deletions(-)
+ create mode 100644 src/mullion/mullion_dynamic_spares.hpp
+
+diff --git a/src/d3d11/d3d11_buffer.cpp b/src/d3d11/d3d11_buffer.cpp
+index a28fa28..85fb330 100644
+--- a/src/d3d11/d3d11_buffer.cpp
++++ b/src/d3d11/d3d11_buffer.cpp
+@@ -142,7 +142,7 @@ public:
+     structured = pDesc->MiscFlags & D3D11_RESOURCE_MISC_BUFFER_STRUCTURED;
+     allow_raw_view = pDesc->MiscFlags & D3D11_RESOURCE_MISC_BUFFER_ALLOW_RAW_VIEWS;
+     if (!(desc.BindFlags & kD3D11OutputBindFlags)) {
+-      dynamic_ = new DynamicBuffer(buffer_.ptr(), flags);
++      dynamic_ = new DynamicBuffer(buffer_.ptr(), flags, &device->GetMullionDevice().queue().dynamic_spares);
+     }
+   }
+ 
+diff --git a/src/d3d11/d3d11_texture_dynamic.cpp b/src/d3d11/d3d11_texture_dynamic.cpp
+index 805488b..9b7cc12 100644
+--- a/src/d3d11/d3d11_texture_dynamic.cpp
++++ b/src/d3d11/d3d11_texture_dynamic.cpp
+@@ -139,7 +139,7 @@ HRESULT CreateDynamicTextureInternal(MTLD3D11Device *pDevice,
+     Subresource subresource;
+     subresource.buffer = new Buffer(buf_len, pDevice->GetMTLDevice());
+     subresource.buffer->rename(subresource.buffer->allocate(buffer_flags));
+-    subresource.dynamic = new DynamicBuffer(subresource.buffer.ptr(), buffer_flags);
++    subresource.dynamic = new DynamicBuffer(subresource.buffer.ptr(), buffer_flags, &pDevice->GetMullionDevice().queue().dynamic_spares);
+     subresource.bytes_per_row = bpr;
+     subresource.bytes_per_depth = bpi;
+ 
+diff --git a/src/d3d11/d3d11_texture_linear.cpp b/src/d3d11/d3d11_texture_linear.cpp
+index 8f0dc00..b3630b4 100644
+--- a/src/d3d11/d3d11_texture_linear.cpp
++++ b/src/d3d11/d3d11_texture_linear.cpp
+@@ -67,7 +67,7 @@ TDynamicLinearTexture(
+             ptr_add(pInitialData->pSysMem, row * pInitialData->SysMemPitch), row_bytes);
+       }
+     }
+-    dynamic_ = new DynamicLinearTexture(this->texture_.ptr(), flags);
++    dynamic_ = new DynamicLinearTexture(this->texture_.ptr(), flags, &device->GetMullionDevice().queue().dynamic_spares, bytes_per_image_);
+   }
+   Rc<StagingResource> staging(UINT) final { return nullptr; }
+   Rc<DynamicBuffer> dynamicBuffer(UINT*, UINT*) final { return {}; };
+diff --git a/src/mullion/mullion_buffer.cpp b/src/mullion/mullion_buffer.cpp
+index b6b63ef..0511e36 100644
+--- a/src/mullion/mullion_buffer.cpp
++++ b/src/mullion/mullion_buffer.cpp
+@@ -18,6 +18,7 @@
+ 
+ #include "mullion_buffer.hpp"
+ #include "mullion_heartbeat.hpp"
++#include "util_env.hpp"
+ #include "mullion_diag.hpp"
+ #include "mullion_format.hpp"
+ #include "thread.hpp"
+@@ -111,6 +112,23 @@ BufferAllocation::BufferAllocation(
+   mappedMemory_ = info_.memory.get_accessible_or_null();
+ }
+ 
++void
++BufferAllocation::setPurgeableSpare(bool spare) {
++  // MIROE_MUMA_KEEP_HEARTBEAT=1 leaves spares in the heartbeat's set, to measure what that costs
++  static const bool keep_in_heartbeat = env::getEnvVar("MIROE_MUMA_KEEP_HEARTBEAT") == "1";
++  if (spare) {
++    if (kept_ && !keep_in_heartbeat) {
++      heartbeat::Release(obj_);
++      kept_ = false;
++    }
++    obj_.setPurgeableState(WMTPurgeableStateVolatile);
++  } else {
++    obj_.setPurgeableState(WMTPurgeableStateNonVolatile);
++    if (!kept_)
++      kept_ = heartbeat::Keep(obj_, info_.length);
++  }
++}
++
+ void
+ BufferAllocation::free() {
+   if (kept_)
+diff --git a/src/mullion/mullion_buffer.hpp b/src/mullion/mullion_buffer.hpp
+index b26cc98..187d109 100644
+--- a/src/mullion/mullion_buffer.hpp
++++ b/src/mullion/mullion_buffer.hpp
+@@ -147,6 +147,18 @@ public:
+     return current_suballocation_;
+   }
+ 
++  /** miroe MUMA: bytes of this allocation (several names when it was made for more than one) */
++  uint64_t
++  allocatedLength() const noexcept {
++    return info_.length;
++  }
++
++  /**
++   * miroe MUMA: a spare whose old contents no discard reads. While it is one, its memory is purgeable and it leaves
++   * the residency heartbeat's set, which would otherwise ask macOS to keep it resident; reused, it is neither.
++   */
++  void setPurgeableSpare(bool spare);
++
+   void
+   updateContents(uint64_t offset, const void *data, uint64_t length, uint32_t suballocation = 0) noexcept {
+     if (likely(mappedMemory_ != nullptr && !flags_.test(BufferAllocationFlag::GpuManaged))) {
+diff --git a/src/mullion/mullion_command_queue.cpp b/src/mullion/mullion_command_queue.cpp
+index 4ec7e82..fc98a23 100644
+--- a/src/mullion/mullion_command_queue.cpp
++++ b/src/mullion/mullion_command_queue.cpp
+@@ -153,6 +153,8 @@ CommandQueue::CommandQueue(WMT::Device device) :
+     chunk.reset();
+   };
+   event = device.newSharedEvent();
++  dynamic_spares.setDevice(device);
++  spareThread = mullion::thread([this]() { this->SpareTrimThread(); });
+ }
+ 
+ CommandQueue::~CommandQueue() {
+@@ -187,6 +189,8 @@ CommandQueue::Shutdown() {
+   ready_for_commit++;
+   ready_for_commit.notify_one();
+   SharedEventListener_destroy(shared_event_listener);
++  if (spareThread.joinable())
++    spareThread.join();
+   if (encodeThread.joinable())
+     encodeThread.join();
+   finishThread.join();
+@@ -198,6 +202,17 @@ CommandQueue::Shutdown() {
+   TRACE("Destructed command queue");
+ }
+ 
++uint32_t
++CommandQueue::SpareTrimThread() {
++  env::setThreadName("mullion-spare-trim");
++  // independent of submissions, so spares also come back when the application stops rendering
++  while (!stopped.load(std::memory_order_acquire)) {
++    Sleep(250);
++    dynamic_spares.trim(cpu_coherent.signaledValue());
++  }
++  return 0;
++}
++
+ void
+ CommandQueue::CommitCurrentChunk() {
+   auto began = profile_ ? diag::Now() : 0;
+diff --git a/src/mullion/mullion_command_queue.hpp b/src/mullion/mullion_command_queue.hpp
+index 542a02e..e808713 100644
+--- a/src/mullion/mullion_command_queue.hpp
++++ b/src/mullion/mullion_command_queue.hpp
+@@ -29,6 +29,7 @@
+ #include "mullion_counter.hpp"
+ #include "mullion_query.hpp"
+ #include "mullion_resource_initializer.hpp"
++#include "mullion_dynamic_spares.hpp"
+ #include "mullion_ring_bump_allocator.hpp"
+ #include "mullion_statistics.hpp"
+ #include "log/log.hpp"
+@@ -166,6 +167,9 @@ private:
+ 
+   uint32_t WaitForFinishThread();
+ 
++  /** miroe MUMA: frees spare allocations of dynamic resources every 250 ms, independent of submissions */
++  uint32_t SpareTrimThread();
++
+   std::atomic_uint64_t ready_for_encode = 1; // we start from 1, so 0 is always coherent
+   std::atomic_uint64_t ready_for_commit = 1;
+   std::atomic_uint64_t chunk_ongoing = 0;
+@@ -218,6 +222,8 @@ public:
+   std::uint64_t current_event_seq_id = 0;
+   FrameStatisticsContainer statistics;
+   ResourceInitializer initializer;
++  /** miroe MUMA: dynamic resources with spare allocations, trimmed by spareThread */
++  DynamicSpareRegistry dynamic_spares;
+   CounterPool counter_pool;
+   diag::TimestampSamples timestamp_samples;
+ 
+@@ -371,6 +377,10 @@ public:
+   }
+ 
+   void Retain(uint64_t seq, Allocation *allocation);
++
++private:
++  /** miroe MUMA: declared last, started in the constructor's body once the registry knows the device */
++  mullion::thread spareThread;
+ };
+ 
+ } // namespace mullion
+diff --git a/src/mullion/mullion_dynamic.cpp b/src/mullion/mullion_dynamic.cpp
+index 5745424..4c77295 100644
+--- a/src/mullion/mullion_dynamic.cpp
++++ b/src/mullion/mullion_dynamic.cpp
+@@ -1,12 +1,159 @@
+ #include "mullion_dynamic.hpp"
+ #include "mullion_texture.hpp"
+ #include "mullion_ring_bump_allocator.hpp"
++#include "mullion_memory.hpp"
++#include <algorithm>
++#include <chrono>
++#include <string>
++#include "util_env.hpp"
++#include "log/log.hpp"
+ 
+ namespace mullion {
+-DynamicBuffer::DynamicBuffer(Buffer *buffer, Flags<BufferAllocationFlag> flags) :
++uint64_t
++DynamicSpareRegistry::now_ms() {
++  return std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now().time_since_epoch())
++      .count();
++}
++
++DynamicSpareRegistry::DynamicSpareRegistry() {
++  auto value = env::getEnvVar("MIROE_MUMA_FREE_MS");
++  if (!value.empty())
++    free_ms_ = std::stoull(value);
++  value = env::getEnvVar("MIROE_MUMA_MAX_IDLE_MB");
++  if (!value.empty())
++    max_idle_bytes_ = std::stoull(value) << 20;
++  value = env::getEnvVar("MIROE_MUMA_BUDGET_MB");
++  if (!value.empty())
++    budget_override_ = std::stoull(value) << 20;
++  purgeable_ = env::getEnvVar("MIROE_MUMA_PURGEABLE") != "0";
++}
++
++void
++DynamicSpareRegistry::setDevice(WMT::Device device) {
++  device_ = device;
++  Logger::info(str::format("miroe MUMA: memory budget ", budget() >> 20, " MB, idle spare limit ",
++       std::min(max_idle_bytes_, budget() / 8u) >> 20, " MB"));
++}
++
++uint64_t
++DynamicSpareRegistry::budget() {
++  if (budget_override_)
++    return budget_override_;
++  if (!device_.handle)
++    return ~0ull;
++  // Mullion's budget: 95% of the working set, lower under macOS memory pressure (DXVK's updateMemoryHeapBudgets
++  // keeps a reserve of the heap out of its budget in the same way)
++  return memory::Budget(device_);
++}
++
++uint64_t
++DynamicSpareRegistry::freeIdleLocked(uint64_t coherent_seq_id, uint64_t bytes) {
++  uint64_t freed = 0;
++  for (auto it = holders_.begin(); it != holders_.end() && freed < bytes;) {
++    bool empty = false;
++    freed += (*it)->freeIdleSpares(coherent_seq_id, bytes - freed, empty);
++    if (empty)
++      it = holders_.erase(it);
++    else
++      ++it;
++  }
++  return freed;
++}
++
++void
++DynamicSpareRegistry::trim(uint64_t coherent_seq_id) {
++  SpareTrimContext ctx{
++      .coherent_seq_id = coherent_seq_id,
++      .now_ms = now_ms(),
++      .free_ms = free_ms_,
++      .purgeable = purgeable_,
++      .timed_free_allowance = kChunkSize,
++  };
++  // lock order: registry, then holder. Holders register only after releasing their own lock.
++  std::lock_guard<mullion::mutex> lock(mutex_);
++  for (auto it = holders_.begin(); it != holders_.end();) {
++    if ((*it)->trimSpares(ctx))
++      it = holders_.erase(it);
++    else
++      ++it;
++  }
++  if (!ctx.idle_bytes)
++    return;
++  // DXVK (freeEmptyChunksInPool): bound unused memory, scaled down when the budget is small, and free all of
++  // it when the device is over budget
++  uint64_t limit = std::min(max_idle_bytes_, budget() / 8u);
++  uint64_t excess = ctx.idle_bytes > limit ? ctx.idle_bytes - limit : 0;
++  if (device_.handle && device_.currentAllocatedSize() > budget())
++    excess = ctx.idle_bytes;
++  if (excess)
++    freeIdleLocked(coherent_seq_id, excess);
++}
++
++void
++DynamicSpareRegistry::makeRoom(uint64_t coherent_seq_id, uint64_t bytes) {
++  if (!device_.handle)
++    return;
++  uint64_t limit = budget(), allocated = device_.currentAllocatedSize();
++  if (allocated + bytes <= limit)
++    return;
++  std::lock_guard<mullion::mutex> lock(mutex_);
++  freeIdleLocked(coherent_seq_id, allocated + bytes - limit);
++}
++
++DynamicBuffer::DynamicBuffer(Buffer *buffer, Flags<BufferAllocationFlag> flags, DynamicSpareRegistry *spares) :
+     buffer(buffer),
+     flags_(flags),
+-    name_(buffer->current()) {}
++    name_(buffer->current()),
++    spares_(spares) {
++  // DXMT and Mullion flag dynamic buffers SuballocateFromOnePage; a spare is purgeable by its whole allocation,
++  // whatever names it holds, since it is queued only when none of them is in use
++  purgeable_spares_ = buffer->length() >= DynamicSpareRegistry::kPurgeableMinSize &&
++                      !flags.test(BufferAllocationFlag::CpuPlaced);
++}
++
++DynamicBuffer::~DynamicBuffer() {
++  if (spares_)
++    spares_->remove(this);
++}
++
++bool
++DynamicBuffer::trimSpares(SpareTrimContext &ctx) {
++  std::lock_guard<mullion::mutex> lock(mutex_);
++  // the queue is in submission order: once an entry is still in use, so are the ones after it. On Mullion an
++  // allocation may hold several names, so its bytes are its own, not the buffer's
++  while (!fifo.empty() && ctx.timed_free_allowance && fifo.front().will_free_at <= ctx.coherent_seq_id &&
++         ctx.now_ms - fifo.front().queued_ms >= ctx.free_ms) {
++    ctx.timed_free_allowance -= std::min(ctx.timed_free_allowance, fifo.front().allocation->allocatedLength());
++    fifo.pop_front();
++  }
++  for (auto &entry : fifo) {
++    if (entry.will_free_at > ctx.coherent_seq_id)
++      break;
++    ctx.idle_bytes += entry.allocation->allocatedLength();
++    if (ctx.purgeable && purgeable_spares_ && !entry.purgeable) {
++      // a discard never reads old contents, so the system may take the memory back at any time
++      entry.allocation->setPurgeableSpare(true);
++      entry.purgeable = true;
++    }
++  }
++  if (!fifo.empty())
++    return false;
++  markUnregistered();
++  return true;
++}
++
++uint64_t
++DynamicBuffer::freeIdleSpares(uint64_t coherent_seq_id, uint64_t bytes, bool &empty) {
++  std::lock_guard<mullion::mutex> lock(mutex_);
++  uint64_t freed = 0;
++  while (!fifo.empty() && freed < bytes && fifo.front().will_free_at <= coherent_seq_id) {
++    freed += fifo.front().allocation->allocatedLength();
++    fifo.pop_front();
++  }
++  if ((empty = fifo.empty()))
++    markUnregistered();
++  return freed;
++}
+ 
+ void
+ DynamicBuffer::incRef() {
+@@ -21,39 +168,60 @@ DynamicBuffer::decRef() {
+ 
+ Rc<BufferAllocation>
+ DynamicBuffer::allocate(uint64_t coherent_seq_id, std::optional<uint32_t> filled) {
+-  std::lock_guard<mullion::mutex> lock(mutex_);
+-  if (!fifo.empty() && fifo.front().will_free_at <= coherent_seq_id) {
+-    auto ret = std::move(fifo.front().allocation);
+-    fifo.pop();
+-    return ret;
++  uint64_t names;
++  {
++    std::lock_guard<mullion::mutex> lock(mutex_);
++    if (!fifo.empty() && fifo.front().will_free_at <= coherent_seq_id) {
++      auto &entry = fifo.front();
++      if (entry.purgeable) // contents may be gone, which is fine for a discard
++        entry.allocation->setPurgeableSpare(false);
++      Rc<BufferAllocation> ret = std::move(entry.allocation);
++      fifo.pop_front();
++      return ret;
++    }
++    // Mullion: a command list's filled allocation, or an immediate one with an older name pending, doubles within a
++    // staging block; round its stride as BufferAllocation does (D3D11.3 5.6.1: Map pointers are 16-byte aligned)
++    names = 2ull * filled.value_or(fifo.empty() ? 0 : name_suballocation_ + 1);
++    names = std::min<uint64_t>(names, kStagingBlockSize / align(name_->suballocation_size_, 16));
+   }
+-  // a command list's filled allocation, or an immediate one with an older name pending, doubles within a staging block
+-  // round its stride as BufferAllocation does (D3D11.3 5.6.1: Map pointers are 16-byte aligned)
+-  auto names = 2ull * filled.value_or(fifo.empty() ? 0 : name_suballocation_ + 1);
+-  return buffer->allocate(flags_, std::min<uint64_t>(names, kStagingBlockSize / align(name_->suballocation_size_, 16)));
++  // a new allocation: stay inside the budget first (outside our lock, the registry locks every holder)
++  if (spares_ && buffer->length() >= DynamicSpareRegistry::kPurgeableMinSize)
++    spares_->makeRoom(coherent_seq_id, buffer->length());
++  return buffer->allocate(flags_, names);
+ }
+ 
+ void
+ DynamicBuffer::updateImmediateName(uint64_t current_seq_id, Rc<BufferAllocation> &&allocation, uint32_t suballocation, bool owned_by_command_list) {
+-  std::lock_guard<mullion::mutex> lock(mutex_);
+-  if (!owned_by_command_list_)
+-    fifo.push(QueueEntry{.allocation = std::move(name_), .will_free_at = current_seq_id});
+-  name_ = std::move(allocation);
+-  name_suballocation_ = suballocation;
+-  owned_by_command_list_ = owned_by_command_list;
++  bool queued = false;
++  {
++    std::lock_guard<mullion::mutex> lock(mutex_);
++    if (!owned_by_command_list_) {
++      fifo.push_back(QueueEntry{.allocation = std::move(name_), .will_free_at = current_seq_id});
++      queued = true;
++    }
++    name_ = std::move(allocation);
++    name_suballocation_ = suballocation;
++    owned_by_command_list_ = owned_by_command_list;
++  }
++  if (queued && spares_)
++    spares_->add(this);
+ }
+ 
+ void
+ DynamicBuffer::recycle(uint64_t current_seq_id, Rc<BufferAllocation> &&allocation) {
+-  std::lock_guard<mullion::mutex> lock(mutex_);
+-  if (owned_by_command_list_) {
+-    if (name_.ptr() == allocation.ptr()) {
+-      owned_by_command_list_ = false;
+-      auto _ = std::move(allocation);
+-      return;
++  {
++    std::lock_guard<mullion::mutex> lock(mutex_);
++    if (owned_by_command_list_) {
++      if (name_.ptr() == allocation.ptr()) {
++        owned_by_command_list_ = false;
++        auto _ = std::move(allocation);
++        return;
++      }
+     }
++    fifo.push_back(QueueEntry{.allocation = std::move(allocation), .will_free_at = current_seq_id});
+   }
+-  fifo.push(QueueEntry{.allocation = std::move(allocation), .will_free_at = current_seq_id});
++  if (spares_)
++    spares_->add(this);
+ }
+ 
+ uint32_t
+@@ -64,10 +232,49 @@ DynamicBuffer::nextSuballocation() {
+   return 0;
+ }
+ 
+-DynamicLinearTexture::DynamicLinearTexture(Texture *texture, Flags<TextureAllocationFlag> flags) :
++DynamicLinearTexture::DynamicLinearTexture(Texture *texture, Flags<TextureAllocationFlag> flags, DynamicSpareRegistry *spares, uint64_t size) :
+     texture(texture),
+     flags_(flags),
+-    name_(texture->current()) {}
++    name_(texture->current()),
++    spares_(spares),
++    size_(size) {}
++
++DynamicLinearTexture::~DynamicLinearTexture() {
++  if (spares_)
++    spares_->remove(this);
++}
++
++bool
++DynamicLinearTexture::trimSpares(SpareTrimContext &ctx) {
++  std::lock_guard<mullion::mutex> lock(mutex_);
++  while (!fifo.empty() && ctx.timed_free_allowance && fifo.front().will_free_at <= ctx.coherent_seq_id &&
++         ctx.now_ms - fifo.front().queued_ms >= ctx.free_ms) {
++    fifo.pop_front();
++    ctx.timed_free_allowance -= std::min(ctx.timed_free_allowance, size_);
++  }
++  for (auto &entry : fifo) {
++    if (entry.will_free_at > ctx.coherent_seq_id)
++      break;
++    ctx.idle_bytes += size_;
++  }
++  if (!fifo.empty())
++    return false;
++  markUnregistered();
++  return true;
++}
++
++uint64_t
++DynamicLinearTexture::freeIdleSpares(uint64_t coherent_seq_id, uint64_t bytes, bool &empty) {
++  std::lock_guard<mullion::mutex> lock(mutex_);
++  uint64_t freed = 0;
++  while (!fifo.empty() && freed < bytes && fifo.front().will_free_at <= coherent_seq_id) {
++    fifo.pop_front();
++    freed += std::max<uint64_t>(size_, 1u);
++  }
++  if ((empty = fifo.empty()))
++    markUnregistered();
++  return freed;
++}
+ 
+ void
+ DynamicLinearTexture::incRef() {
+@@ -82,45 +289,50 @@ DynamicLinearTexture::decRef() {
+ 
+ Rc<TextureAllocation>
+ DynamicLinearTexture::allocate(uint64_t coherent_seq_id) {
+-  std::lock_guard<mullion::mutex> lock(mutex_);
+-  Rc<TextureAllocation> ret;
+-  for (;;) {
+-    if (fifo.empty()) {
+-      break;
+-    }
+-    auto entry = fifo.front();
+-    if (entry.will_free_at > coherent_seq_id) {
+-      break;
++  {
++    std::lock_guard<mullion::mutex> lock(mutex_);
++    if (!fifo.empty() && fifo.front().will_free_at <= coherent_seq_id) {
++      Rc<TextureAllocation> ret = std::move(fifo.front().allocation);
++      fifo.pop_front();
++      return ret;
+     }
+-    ret = std::move(entry.allocation);
+-    fifo.pop();
+-    break;
+   }
+-  if (!ret.ptr())
+-    ret = texture->allocate(flags_);
+-  return ret;
++  if (spares_ && size_ >= DynamicSpareRegistry::kPurgeableMinSize)
++    spares_->makeRoom(coherent_seq_id, size_);
++  return texture->allocate(flags_);
+ }
+ 
+ void
+ DynamicLinearTexture::updateImmediateName(uint64_t current_seq_id, Rc<TextureAllocation> &&allocation, bool owned_by_command_list) {
+-  std::lock_guard<mullion::mutex> lock(mutex_);
+-  if (!owned_by_command_list_)
+-    fifo.push(QueueEntry{.allocation = std::move(name_), .will_free_at = current_seq_id});
+-  name_ = std::move(allocation);
+-  owned_by_command_list_ = owned_by_command_list;
++  bool queued = false;
++  {
++    std::lock_guard<mullion::mutex> lock(mutex_);
++    if (!owned_by_command_list_) {
++      fifo.push_back(QueueEntry{.allocation = std::move(name_), .will_free_at = current_seq_id});
++      queued = true;
++    }
++    name_ = std::move(allocation);
++    owned_by_command_list_ = owned_by_command_list;
++  }
++  if (queued && spares_)
++    spares_->add(this);
+ }
+ 
+ void
+ DynamicLinearTexture::recycle(uint64_t current_seq_id, Rc<TextureAllocation> &&allocation) {
+-  std::lock_guard<mullion::mutex> lock(mutex_);
+-  if (owned_by_command_list_) {
+-    if (name_.ptr() == allocation.ptr()) {
+-      owned_by_command_list_ = false;
+-      auto _ = std::move(allocation);
+-      return;
++  {
++    std::lock_guard<mullion::mutex> lock(mutex_);
++    if (owned_by_command_list_) {
++      if (name_.ptr() == allocation.ptr()) {
++        owned_by_command_list_ = false;
++        auto _ = std::move(allocation);
++        return;
++      }
+     }
++    fifo.push_back(QueueEntry{.allocation = std::move(allocation), .will_free_at = current_seq_id});
+   }
+-  fifo.push(QueueEntry{.allocation = std::move(allocation), .will_free_at = current_seq_id});
++  if (spares_)
++    spares_->add(this);
+ }
+ 
+ } // namespace mullion
+diff --git a/src/mullion/mullion_dynamic.hpp b/src/mullion/mullion_dynamic.hpp
+index dd3da37..ac137bc 100644
+--- a/src/mullion/mullion_dynamic.hpp
++++ b/src/mullion/mullion_dynamic.hpp
+@@ -1,11 +1,13 @@
+ #pragma once
+ #include "mullion_buffer.hpp"
+ #include "mullion_texture.hpp"
+-#include <queue>
++#include "mullion_dynamic_spares.hpp"
++#include <deque>
++#include <optional>
+ 
+ namespace mullion {
+ 
+-class DynamicBuffer {
++class DynamicBuffer final : public DynamicSpareHolder {
+ public:
+   void incRef();
+   void decRef();
+@@ -31,11 +33,17 @@ public:
+     return name_->mappedMemory(name_suballocation_);
+   }
+ 
+-  DynamicBuffer(Buffer *buffer, Flags<BufferAllocationFlag> flags);
++  DynamicBuffer(Buffer *buffer, Flags<BufferAllocationFlag> flags, DynamicSpareRegistry *spares = nullptr);
++  ~DynamicBuffer();
++
++  bool trimSpares(SpareTrimContext &ctx) override;
++  uint64_t freeIdleSpares(uint64_t coherent_seq_id, uint64_t bytes, bool &empty) override;
+ 
+   struct QueueEntry {
+     Rc<BufferAllocation> allocation;
+     uint64_t will_free_at;
++    uint64_t queued_ms = DynamicSpareRegistry::now_ms();
++    bool purgeable = false;
+   };
+ 
+   /**
+@@ -46,14 +54,17 @@ public:
+ private:
+   Flags<BufferAllocationFlag> flags_;
+   std::atomic<uint32_t> refcount_ = {0u};
+-  std::queue<QueueEntry> fifo;
++  std::deque<QueueEntry> fifo;
+   mullion::mutex mutex_;
+   Rc<BufferAllocation> name_;
+   uint32_t name_suballocation_ = 0;
+   bool owned_by_command_list_ = false;
++  DynamicSpareRegistry *spares_ = nullptr;
++  /** Large Metal-allocated buffer: its spares may be marked purgeable */
++  bool purgeable_spares_ = false;
+ };
+ 
+-class DynamicLinearTexture {
++class DynamicLinearTexture final : public DynamicSpareHolder {
+ public:
+   void incRef();
+   void decRef();
+@@ -72,11 +83,16 @@ public:
+     return name_->mappedMemory;
+   }
+ 
+-  DynamicLinearTexture(Texture *buffer, Flags<TextureAllocationFlag> flags);
++  DynamicLinearTexture(Texture *buffer, Flags<TextureAllocationFlag> flags, DynamicSpareRegistry *spares = nullptr, uint64_t size = 0);
++  ~DynamicLinearTexture();
++
++  bool trimSpares(SpareTrimContext &ctx) override;
++  uint64_t freeIdleSpares(uint64_t coherent_seq_id, uint64_t bytes, bool &empty) override;
+ 
+   struct QueueEntry {
+     Rc<TextureAllocation> allocation;
+     uint64_t will_free_at;
++    uint64_t queued_ms = DynamicSpareRegistry::now_ms();
+   };
+   /**
+    * readonly
+@@ -86,10 +102,13 @@ public:
+ private:
+   Flags<TextureAllocationFlag> flags_;
+   std::atomic<uint32_t> refcount_ = {0u};
+-  std::queue<QueueEntry> fifo;
++  std::deque<QueueEntry> fifo;
+   mullion::mutex mutex_;
+   Rc<TextureAllocation> name_;
+   bool owned_by_command_list_ = false;
++  DynamicSpareRegistry *spares_ = nullptr;
++  /** Bytes of one allocation */
++  uint64_t size_ = 0;
+ };
+ 
+ } // namespace mullion
+diff --git a/src/mullion/mullion_dynamic_spares.hpp b/src/mullion/mullion_dynamic_spares.hpp
+new file mode 100644
+index 0000000..bd5b9c4
+--- /dev/null
++++ b/src/mullion/mullion_dynamic_spares.hpp
+@@ -0,0 +1,141 @@
++#pragma once
++
++#include "Metal.hpp"
++#include "thread.hpp"
++#include <atomic>
++#include <cstdint>
++#include <unordered_set>
++
++namespace mullion {
++
++class DynamicSpareRegistry;
++
++/**
++ * miroe MUMA: what one trim pass knows and collects.
++ */
++struct SpareTrimContext {
++  uint64_t coherent_seq_id;
++  uint64_t now_ms;
++  /** A spare the GPU is done with is freed after waiting this long */
++  uint64_t free_ms;
++  bool purgeable;
++  /** Bytes the time rule may still free in this pass (DXVK frees at most one chunk per pass) */
++  uint64_t timed_free_allowance;
++  /** Out: bytes of spares the GPU is done with that are still held after the time rule */
++  uint64_t idle_bytes = 0;
++};
++
++/**
++ * miroe MUMA: a dynamic buffer or texture that keeps spare (renamed-away) allocations.
++ *
++ * WRITE_DISCARD renames a dynamic resource to a fresh allocation while the GPU still reads the old one; the
++ * old one is queued as a spare for reuse. Without trimming, the spares of a burst stay allocated for the
++ * life of the resource, and a resource that is no longer mapped never drops them (DXMT issue #260).
++ */
++class DynamicSpareHolder {
++public:
++  /**
++   * Called by the registry with its lock held. Applies the time rule, marks large spares purgeable and adds
++   * the bytes of idle spares (GPU done) to ctx.idle_bytes. Returns true when no spare is left; the holder
++   * then clears its registration under its own lock (see markUnregistered).
++   */
++  virtual bool trimSpares(SpareTrimContext &ctx) = 0;
++
++  /**
++   * Called by the registry with its lock held. Frees idle spares, oldest first, until at least `bytes` are
++   * freed or none is left; sets `empty` (and clears the registration) when no spare is left.
++   */
++  virtual uint64_t freeIdleSpares(uint64_t coherent_seq_id, uint64_t bytes, bool &empty) = 0;
++
++protected:
++  ~DynamicSpareHolder() = default;
++  /** With the holder's lock held and its spare queue empty */
++  void
++  markUnregistered() {
++    registered_.store(false, std::memory_order_release);
++  }
++
++private:
++  friend class DynamicSpareRegistry;
++  std::atomic<bool> registered_ = false;
++};
++
++/**
++ * The holders of one command queue (sequence ids are per queue). A thread of the queue calls trim() every
++ * 250 ms, independent of submissions, so spares come back even when the application stops submitting.
++ *
++ * Besides MUMA's own rules (time rule, purgeable spares) the pass follows DXVK's memory allocator
++ * (src/dxvk/dxvk_memory.cpp, zlib license, https://github.com/doitsujin/dxvk):
++ *  - a limit on unused memory, past which idle spares are freed regardless of age
++ *    (freeEmptyChunksInPool: 4 max-size chunks for mapped memory), scaled down for small Metal budgets;
++ *  - a memory budget (updateMemoryHeapBudgets), with idle spares freed before an allocation that would exceed
++ *    it. On Mullion the budget is Mullion's own memory::Budget: 95% of the Metal working set, lowered as macOS
++ *    memory pressure rises (src/mullion/mullion_memory.hpp), so spares go first when the system runs short;
++ *  - the time rule frees at most one max-size chunk worth of memory per pass.
++ */
++class DynamicSpareRegistry {
++public:
++  /** MUMA: a spare the GPU is done with is freed after waiting this long (MIROE_MUMA_FREE_MS overrides) */
++  static constexpr uint64_t kSpareFreeMs = 2000;
++  /** MUMA: spares at least this large are marked purgeable as soon as the GPU is done with them */
++  static constexpr uint64_t kPurgeableMinSize = 1u << 20;
++  /** DXVK's maximum chunk size: the time rule frees at most this much per pass */
++  static constexpr uint64_t kChunkSize = 256ull << 20;
++  /** DXVK keeps at most 4 unused max-size chunks of mapped memory (MIROE_MUMA_MAX_IDLE_MB overrides) */
++  static constexpr uint64_t kMaxIdleBytes = 4 * kChunkSize;
++
++  DynamicSpareRegistry();
++
++  /** The Metal device whose working set is the budget */
++  void setDevice(WMT::Device device);
++
++  /**
++   * After a holder queued a spare, outside the holder's lock. Lock-free when already registered: trim clears
++   * the flag under the holder's lock only when the queue is empty, so a spare queued after that sees it
++   * cleared and registers again.
++   */
++  void
++  add(DynamicSpareHolder *holder) {
++    if (holder->registered_.load(std::memory_order_acquire))
++      return;
++    std::lock_guard<mullion::mutex> lock(mutex_);
++    if (!holder->registered_.load(std::memory_order_relaxed)) {
++      holders_.insert(holder);
++      holder->registered_.store(true, std::memory_order_release);
++    }
++  }
++
++  void
++  remove(DynamicSpareHolder *holder) {
++    std::lock_guard<mullion::mutex> lock(mutex_);
++    if (holders_.erase(holder))
++      holder->registered_.store(false, std::memory_order_release);
++  }
++
++  /** The periodic pass */
++  void trim(uint64_t coherent_seq_id);
++
++  /**
++   * Before a new allocation of `bytes`, outside any holder lock: if it would exceed the budget, frees idle
++   * spares first (DXVK frees unused memory before an allocation that would exceed the heap budget).
++   */
++  void makeRoom(uint64_t coherent_seq_id, uint64_t bytes);
++
++  static uint64_t now_ms();
++
++private:
++  uint64_t budget();
++  uint64_t freeIdleLocked(uint64_t coherent_seq_id, uint64_t bytes);
++
++  mullion::mutex mutex_;
++  std::unordered_set<DynamicSpareHolder *> holders_;
++  WMT::Device device_;
++  uint64_t free_ms_ = kSpareFreeMs;
++  uint64_t max_idle_bytes_ = kMaxIdleBytes;
++  /** 0: Mullion's memory::Budget. MIROE_MUMA_BUDGET_MB sets it, e.g. to act like a smaller Mac */
++  uint64_t budget_override_ = 0;
++  /** MIROE_MUMA_PURGEABLE=0 turns purgeable spares off (for measurements) */
++  bool purgeable_ = true;
++};
++
++} // namespace mullion
+diff --git a/src/winemetal/Metal.hpp b/src/winemetal/Metal.hpp
+index 0f2706c..a519b5c 100644
+--- a/src/winemetal/Metal.hpp
++++ b/src/winemetal/Metal.hpp
+@@ -231,6 +231,11 @@ public:
+ 
+ class Resource : public Allocation {
+ public:
++  /** miroe MUMA v1: returns the previous state */
++  WMTPurgeableState
++  setPurgeableState(WMTPurgeableState state) {
++    return (WMTPurgeableState)MTLResource_setPurgeableState(handle, state);
++  }
+ };
+ 
+ class Texture : public Resource {
+diff --git a/src/winemetal/unix/winemetal_unix.c b/src/winemetal/unix/winemetal_unix.c
+index b435030..f4420e3 100644
+--- a/src/winemetal/unix/winemetal_unix.c
++++ b/src/winemetal/unix/winemetal_unix.c
+@@ -1715,6 +1715,13 @@ _MTLTexture_replaceRegion(void *obj) {
+   return STATUS_SUCCESS;
+ }
+ 
++static NTSTATUS
++_MTLResource_setPurgeableState(void *obj) {
++  struct unixcall_generic_obj_uint64_uint64_ret *params = obj;
++  params->ret = [(id<MTLResource>)params->handle setPurgeableState:(MTLPurgeableState)params->arg];
++  return STATUS_SUCCESS;
++}
++
+ static NTSTATUS
+ _MTLBuffer_didModifyRange(void *obj) {
+   struct unixcall_generic_obj_uint64_uint64_ret *params = obj;
+@@ -7706,6 +7713,7 @@ const void *__wine_unix_call_funcs[] = {
+     &_WMTGetMemoryState,
+     &_MTLResidencySet_requestResidency,
+     &_MTLDevice_temporalScalerSupport,
++    &_MTLResource_setPurgeableState, /* miroe MUMA */
+ };
+ 
+ #ifndef MULLION_NATIVE
+@@ -7928,6 +7936,7 @@ const void *__wine_unix_call_wow64_funcs[] = {
+     &_WMTGetMemoryState,
+     &_MTLResidencySet_requestResidency,
+     &_MTLDevice_temporalScalerSupport,
++    &_MTLResource_setPurgeableState, /* miroe MUMA */
+ };
+ _Static_assert(sizeof(__wine_unix_call_wow64_funcs) / sizeof(__wine_unix_call_wow64_funcs[0]) == WMTUnixCallCount,
+                "32-bit bridge call count");
+diff --git a/src/winemetal/winemetal.h b/src/winemetal/winemetal.h
+index 57af075..c7c88d9 100644
+--- a/src/winemetal/winemetal.h
++++ b/src/winemetal/winemetal.h
+@@ -112,6 +112,14 @@ WINEMETAL_API uint64_t MTLSharedEvent_signaledValue(obj_handle_t event);
+ 
+ WINEMETAL_API void MTLCommandBuffer_encodeSignalEvent(obj_handle_t cmdbuf, obj_handle_t event, uint64_t value);
+ 
++/* miroe MUMA v1: MTLPurgeableState */
++enum WMTPurgeableState : uint64_t {
++  WMTPurgeableStateKeepCurrent = 1,
++  WMTPurgeableStateNonVolatile = 2,
++  WMTPurgeableStateVolatile = 3,
++  WMTPurgeableStateEmpty = 4,
++};
++
+ enum WMTResourceOptions : uint64_t {
+   WMTResourceCPUCacheModeDefaultCache = 0,
+   WMTResourceCPUCacheModeWriteCombined = 1,
+@@ -1792,6 +1800,9 @@ WINEMETAL_API void MTLTexture_replaceRegion(
+ 
+ WINEMETAL_API void MTLBuffer_didModifyRange(obj_handle_t buffer, uint64_t start, uint64_t length);
+ 
++/* miroe MUMA v1: sets a resource's purgeable state and returns the previous one */
++WINEMETAL_API uint64_t MTLResource_setPurgeableState(obj_handle_t resource, uint64_t state);
++
+ WINEMETAL_API void MTLCommandBuffer_presentDrawable(obj_handle_t cmdbuf, obj_handle_t drawable);
+ 
+ WINEMETAL_API void
+@@ -2704,7 +2715,8 @@ enum { WMTUnixSampledEncoder = 167, WMTUnixDiagWrite, WMTUnixDispatchDataBytes,
+        WMTUnixDeviceMaxThreadsPerThreadgroup, WMTUnixDeviceReport, WMTUnixTextureSparseTailHolds,
+        WMTUnixDeviceSparseResidencyInTiles, WMTUnixDeviceNewSpecializedRenderPipeline, WMTUnixBinaryArchiveAdd,
+        WMTUnixRemoveOtherVersions, WMTUnixGetMemoryState, WMTUnixResidencySetRequestResidency,
+-       WMTUnixDeviceTemporalScalerSupport, WMTUnixCallCount };
++       WMTUnixDeviceTemporalScalerSupport,
++       /* miroe MUMA */ WMTUnixResourceSetPurgeableState, WMTUnixCallCount };
+ WINEMETAL_API obj_handle_t MTLCommandBuffer_sampledCommandEncoder(obj_handle_t cmdbuf, enum WMTSampledEncoder type,
+                                                                   const struct WMTSampleBufferAttachmentInfo *samples,
+                                                                   const struct WMTRenderPassInfo *render_info);
+diff --git a/src/winemetal/winemetal_thunks.c b/src/winemetal/winemetal_thunks.c
+index 291eea9..4003dfc 100644
+--- a/src/winemetal/winemetal_thunks.c
++++ b/src/winemetal/winemetal_thunks.c
+@@ -842,6 +842,16 @@ MTLTexture_replaceRegion(
+   UNIX_CALL(45, &params);
+ }
+ 
++WINEMETAL_API uint64_t
++MTLResource_setPurgeableState(obj_handle_t resource, uint64_t state) {
++  struct unixcall_generic_obj_uint64_uint64_ret params;
++  params.handle = resource;
++  params.arg = state;
++  params.ret = 0;
++  UNIX_CALL(WMTUnixResourceSetPurgeableState, &params);
++  return params.ret;
++}
++
+ WINEMETAL_API void
+ MTLBuffer_didModifyRange(obj_handle_t buffer, uint64_t start, uint64_t length) {
+   struct unixcall_generic_obj_uint64_uint64_ret params;
+-- 
+2.54.0 (Apple Git-157)
+

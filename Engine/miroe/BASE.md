@@ -57,7 +57,7 @@ miroe는 **애플 실리콘 전용 ARM64 네이티브 Wine + FEX 엔진**이에�
 | Wine | **upstream Wine master** (!12716 이후 커밋 하나로 고정), ARM64, macOS 27, 4K 페이지, 권한 서명 | 공식 지원이 생겨서 Hadron 고정 커밋을 따라갈 이유가 없어졌어요. 4K 페이지로 16K 문제들이 사라지고, 앞으로 upstream을 따라가기 쉬워요 |
 | Hadron 패치 | 위 표의 "옮겨요"만, 한 번에 하나씩, 테스트와 함께 | 꼭 필요한 것만 유지해요 |
 | FEX | upstream FEX 고정 커밋 + Hadron FEX macOS 패치 7개 (MIT) | macOS 지원은 아직 Hadron에만 있어요 |
-| D3D10/11/12 | **Mullion 채택을 검토** (LGPL, DXMT 포크, D3D12 FL 12_2). MUMA는 Mullion 위에 다시 맞춰요 | PROBLEMS.md D1. DXMT 본가와 Mullion 중 하나를 정하는 비교 측정이 필요해요 |
+| D3D10/11/12 | **Mullion을 기본 그래픽 백엔드로** (LGPL, DXMT 포크, D3D12 FL 12_2) + MUMA 이식 패치 | 2026-11-27 사용자 결정. 아래 5장의 검증 결과. D3DMetal에 기대지 않는 오픈소스 D3D12 |
 | D3D9 / OpenGL / Vulkan | mtld3d (zlib) / WineMetalGL (LGPL) / KosmicKrisp (MIT) | 이미 ARM64 Wine에서 쓰이고 있어요 |
 | 동기화 | msync 계열 채택 연구 (MetalSharp-Wine의 LGPL Wine 변경) | PROBLEMS.md Y1 (Unity 스레드 시간의 55%) |
 | 빌드 | miroe 자체 스크립트 (`scripts/`), llvm-mingw | Hadron 스크립트에서 출발했지만 Hadron 앱 전용 부분은 빼요 |
@@ -84,3 +84,53 @@ ARM64에서는 같은 문제가 구조적으로 생기지 않을 것으로 봐�
 - upstream(9d639791)과 Hadron(0002)은 모두 쓰기 가능한 페이지를 실행 권한 없이 두고, 실행할 때만 읽기+실행으로 바꿔요. placed 메모리는 실행되지 않으니 계속 읽기+쓰기예요.
 - 읽기+실행 메모리를 GPU가 써도 다음 CPU 접근은 0.004ms였어요(멈춤 없음). MAP_JIT 메모리는 프로브가 SIGBUS로 끝나 재지 못했어요. MAP_JIT는 FEX의 JIT 코드 버퍼에만 쓰여서 placed 메모리와 겹치지 않아요.
 - **실제 32비트 프로그램으로 하는 확인은 권한이 생긴 뒤에 해요.** 지금 dev 엔진은 64비트만 돌아요. 그때 문제가 없으면 W1 패치는 miroe에 넣지 않아요.
+
+## 5. 그래픽 백엔드: Mullion 채택 검증 (2026-11-27)
+
+사용자 결정으로 Mullion을 기본 그래픽 백엔드로 정했어요. D3DMetal(닫힌 소스)에 기대지 않고 오픈소스로 D3D12까지 가는 길이에요. 실습실 ARM64 엔진(Hadron dev, 64비트)에 Mullion `0f22b2c`를 올려서 확인했어요.
+
+**빌드**: Mullion은 DXMT와 구조가 같아요(`src/dxmt` → `src/mullion`). ARM64X 링크 오류 하나만 Hadron의 DXMT 패치를 그대로 써서 고쳤어요([`patches/mullion/0001`](patches/mullion)). D3D12 DLL(`d3d12.dll`, `d3d12core.dll`)도 같이 빌드돼요.
+
+**D3D12 기본 동작** ([`Engine/tests/c/d3d12-smoke-test.c`](../tests/c/d3d12-smoke-test.c), 창·셰이더 없음): 기능 수준 **12_2**를 알리고, 렌더 타깃 지우기 → 복사 → 읽기의 65,536픽셀이 모두 맞아요. 프레임당 0.21ms. **셰이더를 쓰는 D3D12는 아직 확인하지 않았어요.**
+
+**Mullion 자체의 메모리 관리** (`src/mullion/mullion_memory.*`, `mullion_heartbeat.*`)
+- 한도: Metal 작업 세트의 95%. macOS 26 이하에서는 넘는 할당을 거부해요(커널 패닉 방지).
+- 예산: 메모리 압력에 따라 3/4, 1/2로 낮아져요. 게임에 알려 주는 DXGI 예산이에요.
+- 하트비트: GPU가 쉬는 동안 1MB 이상 버퍼를 residency set에 넣고 상주를 요청해요(쉬고 난 첫 프레임의 멈춤 방지).
+- **예비 블록은 회수하지 않아요.** 그래서 #260 문제가 그대로 있어요(아래 표의 "원래").
+
+**MUMA와의 관계**
+- 겹치지 않고 서로 보완해요. Mullion은 "얼마까지 쓸지"를 정하고, MUMA는 "안 쓰는 예비 블록을 돌려주는" 일을 해요.
+- 이식하면서 MUMA v2의 예산을 Mullion의 압력 반영 예산으로 바꿨어요. 시스템 메모리가 모자라면 예비 블록부터 풀려요.
+- **충돌 한 곳**: 하트비트가 purgeable 예비 블록을 계속 상주시키면 purgeable 효과가 없어져요(아래 표). 이식판은 예비 블록이 purgeable인 동안 하트비트 집합에서 빼고, 다시 쓸 때 넣어요.
+- Mullion은 할당 하나에 이름(name) 여러 개를 담을 수 있어서, 예비 블록 크기를 버퍼가 아니라 할당 기준으로 세요.
+
+| GPU 메모리 (MB) | DXMT 원래 | DXMT + MUMA v2 | Mullion 원래 | **Mullion + MUMA** |
+| --- | ---: | ---: | ---: | ---: |
+| 동적 버퍼 몰아치기 뒤 | 920 | 308 | 923 | **308** |
+| 제출을 멈춘 앱 | 920 | 308 | 923 | **308** |
+| 64MB 동적 텍스처 | 968 | 196 | 971 | **199** |
+| 예비 블록 60초 유지, purgeable 켬 | — | — | — | **308** |
+| 같은 조건, 하트비트 집합에 그대로 둠 | — | — | — | 923 |
+| 같은 조건, purgeable 끔 | — | — | — | 923 |
+
+| 게임 비슷한 테스트 (3회) | Mullion 원래 | **Mullion + MUMA** |
+| --- | --- | --- |
+| 교전 1 뒤 메모리 (GPU) | 873 MB (584) | **594 MB (303)**: GPU −48% |
+| 메뉴 메모리 (GPU) | 912 MB (629) | **579 MB (294)**: GPU −53% |
+| 교전 중 최대 | 996 / 1,045 MB | 1,043 / 1,165 MB (실행마다 범위 안) |
+| 교전 2 프레임 평균 / p99 / 최대 | 1.80 / 9.83 / 11.70 ms | 1.75 / 8.19 / 11.40 ms |
+| 작은 discard 2000번 (번갈아 5회) | 3.117 ms (3.067~3.159) | 3.136 ms (3.064~3.219): 차이 없음 |
+
+데이터 확인(재사용된 예비 블록의 내용)은 모든 경우 통과했어요.
+
+**결론**: MUMA는 Mullion에 이식할 수 있고, Mullion의 메모리 관리와 충돌하지 않게 맞췄어요(하트비트 한 곳). 효과는 DXMT에서와 같아요. 속도 차이는 없어요(처음 따로 잰 3.229 / 3.308ms는 측정 시점 차이였고, 번갈아 재니 범위가 겹쳤어요). 남은 것: 셰이더를 쓰는 D3D12 테스트, 실제 메모리 압력 아래 동작, 하트비트가 지키려는 "쉬고 난 첫 프레임"과 MUMA 회수의 관계 측정.
+
+## 6. upstream Wine ARM64 빌드 준비 (2026-11-27)
+
+[`scripts/build-wine-upstream.sh`](scripts/build-wine-upstream.sh)로 upstream Wine `ecca8e7552`(11.22-280, `sources.conf`의 `wine-upstream`)를 aarch64 + arm64ec + i386 PE로 **빌드했어요**. 로더는 `wine.app` 묶음으로 만들어져요. 서명 정보 없이 빌드해서 ad-hoc 서명이고, 실행하면 macOS가 바로 종료시켜요(exit 137). 예상대로예요.
+
+개발자 계정이 열리면 할 일:
+1. App ID와 개발용 provisioning profile을 만들어요(사용자가 직접, 위키의 순서).
+2. `CODESIGN_IDENTITY="Apple Development: …" PROVISIONING_PROFILE=… scripts/build-wine-upstream.sh`로 다시 서명해서 빌드해요.
+3. FEX(Hadron FEX 패치)와 Mullion + MUMA를 이 엔진에 올리고, 64비트·32비트·D3D12 테스트를 돌려요.
