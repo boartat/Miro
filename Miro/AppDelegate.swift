@@ -55,6 +55,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         if EngineManager.shared.isReady(.modern) {
             WineEngine.modern.killAll()
         }
+        if EngineManager.shared.isReady(.miroe) {
+            WineEngine.miroe.killAll()
+        }
     }
 
     nonisolated static func deleteOldLogs() {

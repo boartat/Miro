@@ -97,6 +97,9 @@ private struct RuntimeSettings: View {
             Section {
                 EngineRow(kind: .classic)
                 EngineRow(kind: .modern)
+                if MiroeEngine.isInstalled {
+                    EngineRow(kind: .miroe)
+                }
             } header: {
                 Text("엔진")
             } footer: {

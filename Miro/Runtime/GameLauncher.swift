@@ -72,6 +72,17 @@ final class GameLauncher: ObservableObject {
     private func launch(_ game: Game, plan wanted: LaunchPlan?) {
         guard running[game.id] == nil, !preparing.contains(game.id) else { return }
         let engines = EngineManager.shared
+        if game.winePreference == .miroe, wanted == nil, !engines.isReady(.miroe) {
+            failure = LaunchFailure(
+                gameID: game.id, gameName: game.name, title: "miroe 실험 엔진이 준비되지 않았어요",
+                exitCode: nil, missing: [], dependencyIDs: [],
+                hints: [MiroeEngine.isInstalled
+                        ? "설정 → 호환 레이어에서 miroe의 'Windows 환경 준비'를 눌러 주세요."
+                        : "miroe 엔진 파일이 없어요. 아직 내려받을 수 없는 실험 엔진이라 Scripts/install_miroe_engine.sh로 넣어요.",
+                        "게임 설정에서 엔진을 '자동'으로 바꾸면 기존 엔진으로 실행해요."],
+                logURL: nil, engine: .miroe)
+            return
+        }
         guard let plan = wanted ?? LaunchPlanner.plans(for: game).first,
               let bottle = engines.bottle(for: plan.engine) else {
             let needsModern = game.winePreference == .modern || game.wineLearned == .modern
@@ -99,6 +110,15 @@ final class GameLauncher: ObservableObject {
             return
         }
 
+        if plan.engine == .miroe, game.architecture == PEInfo.Arch.x86.rawValue {
+            failure = LaunchFailure(
+                gameID: game.id, gameName: game.name, title: "miroe 실험 엔진은 아직 32비트 게임을 못 돌려요",
+                exitCode: nil, missing: [], dependencyIDs: [],
+                hints: ["이 게임은 32비트예요. 지금 miroe는 Apple의 서명 권한 없이 도는 64비트 전용 판이에요.",
+                        "게임 설정에서 엔진을 '자동'으로 바꾸면 기존 엔진으로 실행해요."],
+                logURL: nil, engine: .miroe)
+            return
+        }
         let engine = WineEngine.of(plan.engine)
         if !(tried[game.id] ?? []).contains(plan) { tried[game.id, default: []].append(plan) }
         preparing.insert(game.id)
@@ -332,6 +352,8 @@ final class GameLauncher: ObservableObject {
     private func installMissingAndRelaunch(_ game: Game, plan: LaunchPlan,
                                            analysis: LogAnalyzer.Result) async -> Bool {
         let kind = plan.engine
+        // winetricks and the vendor installers are not tried on the experimental ARM64 prefix yet
+        guard kind != .miroe else { return false }
         let installs = InstallCenter.shared
         let tried = autoInstalled[game.id] ?? []
         var packages: [Dependency] = []
@@ -418,6 +440,11 @@ final class GameLauncher: ObservableObject {
             if drawn == .dxmt {
                 hints.append("DXMT는 DirectX 10/11만 그려요. 화면이 안 나오거나 바로 꺼지면 아래 'DXVK로 다시 실행'을 눌러 보세요.")
             }
+        }
+        if engine == .miroe {
+            hints.append("이 게임은 miroe 실험 엔진(ARM64 + FEX + Mullion)으로 실행했어요. 실험 엔진이라 안 되는 게임이 많을 수 있어요. "
+                         + "게임 설정에서 엔진을 '자동'으로 바꾸면 기존 엔진으로 돌아가요.")
+            hints.append("miroe에서는 필요한 라이브러리를 아직 자동으로 설치하지 않아요.")
         }
         if missing.contains(where: { $0.dependencyID == nil }) {
             hints.append("'직접 넣어야 하는 파일'은 Miro가 받을 수 없는 게임 전용 파일이에요. 게임을 받은 원본 폴더에 있는지 확인해 주세요.")

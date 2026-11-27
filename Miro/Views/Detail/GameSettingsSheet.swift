@@ -49,11 +49,12 @@ struct GameSettingsSheet: View {
 
                 Section {
                     Picker("엔진", selection: $winePreference) {
-                        ForEach(WinePreference.allCases) { preference in
+                        // the experimental engine is offered only on a Mac where it is installed
+                        ForEach(WinePreference.allCases.filter { $0 != .miroe || MiroeEngine.isInstalled || winePreference == .miroe }) { preference in
                             Text(preference.title).tag(preference)
                         }
                     }
-                    if winePreference != .classic {
+                    if winePreference != .classic && winePreference != .miroe {
                         Picker("그래픽 (최신 엔진)", selection: $graphicsPreference) {
                             ForEach(GraphicsPreference.allCases) { preference in
                                 Text(preference.title).tag(preference)
@@ -150,6 +151,10 @@ struct GameSettingsSheet: View {
             return WineEngine.modern.summary
                 + (engines.isReady(.modern) ? "" : " 아직 설치되지 않았어요. 실행하면 설치 안내가 나와요.")
                 + graphicsFooter
+        case .miroe:
+            return WineEngine.miroe.summary
+                + (game.architecture == PEInfo.Arch.x86.rawValue ? " 이 게임은 32비트라서 miroe로는 실행되지 않아요." : "")
+                + (engines.isReady(.miroe) ? "" : " 설정 → 호환 레이어에서 Windows 환경을 먼저 준비해 주세요.")
         }
     }
 

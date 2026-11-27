@@ -88,6 +88,22 @@ enum ModernEngine {
     }
 }
 
+/// The miroe experimental engine: ARM64 Wine + FEX + Mullion with miroe's patches, built in the miroe lab and put in
+/// place by `Scripts/install_miroe_engine.sh` (it is not downloadable yet: without Apple's cross-architecture
+/// entitlement it runs only 64-bit programs, and a signed build would run only on the developer's registered Macs).
+enum MiroeEngine {
+    /// Short on purpose, like `ModernEngine.root`
+    static let root = MiroPaths.engines.appending(path: "miroe")
+    /// FreeType and what it links, bundled by the install script
+    static let libraries = root.appending(path: "miro/lib")
+    static let marker = root.appending(path: "miro/miroe.json")
+
+    static var isInstalled: Bool {
+        root.appending(path: "bin/wine").fileExists && marker.fileExists
+            && root.appending(path: "lib/wine/aarch64-windows/d3d12.dll").fileExists
+    }
+}
+
 struct EngineMarker: Codable {
     var id: String
     var components: [String: String]
@@ -106,6 +122,9 @@ final class EngineManager: ObservableObject {
     @Published private(set) var progress: Double = 0
     @Published private(set) var detail = ""
     @Published private(set) var modernBottle: Bottle?
+    /// The miroe engine: installed by script, its prefix made on first use
+    @Published private(set) var miroeState: State = .notInstalled
+    @Published private(set) var miroeBottle: Bottle?
     /// The Apple Game Porting Toolkit licence was accepted, so D3DMetal may be used on the modern engine
     @Published private(set) var d3dmetalAccepted = UserDefaults.standard.bool(forKey: EngineManager.licenseKey)
 
@@ -123,23 +142,35 @@ final class EngineManager: ObservableObject {
         if ready, modernBottle == nil {
             modernBottle = Bottle(bottleUrl: MiroPaths.modernBottle, isAvailable: true)
         }
+        if miroeState != .installing {
+            let miroeReady = MiroeEngine.isInstalled && WineEngine.miroe.hasPrefix
+            miroeState = miroeReady ? .installed : .notInstalled
+            miroeBottle = miroeReady ? (miroeBottle ?? Bottle(bottleUrl: MiroPaths.miroeBottle, isAvailable: true)) : nil
+        }
     }
 
     func isReady(_ kind: WineEngineKind) -> Bool {
         switch kind {
         case .classic: return RuntimeManager.shared.isReady
         case .modern: return modernState == .installed && modernBottle != nil
+        case .miroe: return miroeState == .installed && miroeBottle != nil
         }
     }
 
     func bottle(for kind: WineEngineKind) -> Bottle? {
-        kind == .classic ? RuntimeManager.shared.bottle : modernBottle
+        switch kind {
+        case .classic: return RuntimeManager.shared.bottle
+        case .modern: return modernBottle
+        case .miroe: return miroeBottle
+        }
     }
 
-    /// Whether the modern engine can draw with `backend` right now
+    /// Whether the modern engine (or, for Mullion, the miroe engine) can draw with `backend` right now
     func offers(_ backend: GraphicsBackend) -> Bool {
+        if backend == .mullion { return isReady(.miroe) }
         guard isReady(.modern) else { return false }
         switch backend {
+        case .mullion: return false
         case .dxmt: return ModernEngine.dxmtOverlay.fileExists
         case .d3dmetal: return d3dmetalAccepted && ModernEngine.d3dmetalOverlay.fileExists
         case .dxvk: return ModernEngine.dxvkFolder.appending(path: "x64/d3d11.dll").fileExists
@@ -155,6 +186,39 @@ final class EngineManager: ObservableObject {
     /// The engine `game` runs with first (see LaunchPlanner for the whole order)
     func engine(for game: Game) -> WineEngineKind {
         LaunchPlanner.plans(for: game).first?.engine ?? .classic
+    }
+
+    // MARK: - miroe (experimental)
+
+    /// Makes the miroe engine's own prefix once its files are in place, without showing any window
+    func prepareMiroe() async {
+        guard miroeState != .installing, MiroeEngine.isInstalled else { return }
+        miroeState = .installing
+        detail = "miroe Windows 환경 준비 중… (처음 한 번은 1~2분 걸려요)"
+        do {
+            let engine = WineEngine.miroe
+            let bottle = Bottle(bottleUrl: MiroPaths.miroeBottle, isAvailable: true)
+            var env = ProcessRunner.baseEnvironment
+            env.merge(engine.environment(for: bottle)) { $1 }
+            env["WINEDLLOVERRIDES"] = "mscoree,mshtml=;winemac.drv=d;winemenubuilder.exe=d"
+            try await Self.runGuarded(engine: engine, arguments: ["wineboot", "-i"], environment: env, timeout: 300)
+            guard engine.hasPrefix else {
+                throw InstallError(message: "miroe의 Windows 환경을 만들지 못했어요. 로그를 확인해 주세요.")
+            }
+            _ = try? await engine.run(["winecfg", "-v", "win11"], bottle: bottle)
+            // C:\Games is the classic prefix's game folder, as on the modern engine
+            let games = MiroPaths.miroeBottle.appending(path: "drive_c/Games")
+            if !games.fileExists, (try? FileManager.default.destinationOfSymbolicLink(atPath: games.path(percentEncoded: false))) == nil {
+                MiroPaths.ensure(MiroPaths.gamesFolder)
+                try? FileManager.default.createSymbolicLink(at: games, withDestinationURL: MiroPaths.gamesFolder)
+            }
+            miroeBottle = bottle
+            miroeState = .installed
+            detail = "준비 완료"
+        } catch {
+            miroeState = .failed(error.localizedDescription)
+            detail = error.localizedDescription
+        }
     }
 
     // MARK: - Install

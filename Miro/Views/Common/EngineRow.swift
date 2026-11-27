@@ -21,7 +21,7 @@ struct EngineRow: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
             HStack(alignment: .top, spacing: 10) {
-                Image(systemName: kind == .classic ? "cube.fill" : "sparkles")
+                Image(systemName: kind == .classic ? "cube.fill" : kind == .miroe ? "flask.fill" : "sparkles")
                     .foregroundStyle(Theme.accent)
                     .frame(width: 18)
                 VStack(alignment: .leading, spacing: 2) {
@@ -58,6 +58,10 @@ struct EngineRow: View {
                 graphicsRow
                     .padding(.leading, 28)
             }
+            if kind == .miroe {
+                miroeDetail
+                    .padding(.leading, 28)
+            }
         }
         .confirmationDialog("최신 엔진을 삭제할까요?", isPresented: $confirmRemove) {
             Button("삭제", role: .destructive) { engines.uninstallModern() }
@@ -70,6 +74,30 @@ struct EngineRow: View {
     private var trailing: some View {
         if kind == .classic {
             status(runtime.isReady ? "사용 중" : "설치 필요", ok: runtime.isReady)
+        } else if kind == .miroe {
+            switch engines.miroeState {
+            case .installed:
+                status("준비됨 · 64비트 전용", ok: true)
+            case .installing:
+                ProgressView().controlSize(.small)
+            case .notInstalled, .failed:
+                if MiroeEngine.isInstalled {
+                    Button {
+                        Task {
+                            await engines.prepareMiroe()
+                            if engines.isReady(.miroe) { onInstalled?() }
+                        }
+                    } label: {
+                        Text(engines.miroeState == .notInstalled ? "Windows 환경 준비" : "다시 시도")
+                            .font(.system(size: 11, weight: .semibold))
+                    }
+                    .buttonStyle(.borderedProminent)
+                    .controlSize(.small)
+                    .tint(Theme.accent)
+                } else {
+                    status("설치 스크립트 필요", ok: false)
+                }
+            }
         } else {
             switch engines.modernState {
             case .installed:
@@ -127,6 +155,26 @@ struct EngineRow: View {
             }
         }
         .sheet(isPresented: $showLicense) { D3DMetalLicenseSheet().environmentObject(engines) }
+    }
+
+    /// What the experimental engine is and isn't, and its progress
+    @ViewBuilder
+    private var miroeDetail: some View {
+        if engines.miroeState == .installing {
+            Text(engines.detail)
+                .font(.system(size: 10.5))
+                .foregroundStyle(Theme.secondaryText)
+                .lineLimit(1)
+        } else if case .failed(let message) = engines.miroeState {
+            Text(message)
+                .font(.system(size: 10.5))
+                .foregroundStyle(Theme.stop)
+                .lineLimit(3)
+        } else {
+            Label("게임 설정 → 호환 엔진에서 게임마다 고를 수 있어요. 자동으로는 쓰지 않아요.", systemImage: "info.circle")
+                .font(.system(size: 11))
+                .foregroundStyle(Theme.secondaryText)
+        }
     }
 
     private func status(_ text: String, ok: Bool) -> some View {

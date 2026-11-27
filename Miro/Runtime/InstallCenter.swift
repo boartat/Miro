@@ -53,7 +53,11 @@ final class InstallCenter: ObservableObject {
     func isInstalled(_ id: String, on engine: WineEngineKind) -> Bool { installedSet(on: engine).contains(id) }
 
     func installedSet(on engine: WineEngineKind) -> Set<String> {
-        engine == .classic ? installed : installedModern
+        switch engine {
+        case .classic: return installed
+        case .modern: return installedModern
+        case .miroe: return []  // no library installs on the experimental engine yet
+        }
     }
 
     func job(_ id: String) -> Job? { jobs[id] }

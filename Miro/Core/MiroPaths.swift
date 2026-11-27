@@ -39,6 +39,9 @@ enum MiroPaths {
     /// The modern engine's prefix: an APFS clone (of the previous modern prefix, or of `bottle`) whose
     /// C:\Games links back to `bottle`
     static let modernBottle = BottleData.defaultBottleDir.appending(path: "Miro-CX")
+    /// The miroe engine's prefix: its own, made by the ARM64 Wine (an x86 prefix is not shared with it).
+    /// C:\\Games links back to `bottle`
+    static let miroeBottle = BottleData.defaultBottleDir.appending(path: "Miro-miroe")
     /// Prefix of the modern engine Miro 1.1 used (WineHQ 11.21); the new one starts as a copy of it
     static let previousModernBottle = BottleData.defaultBottleDir.appending(path: "Miro-W11")
     static var driveC: URL { bottle.appending(path: "drive_c") }

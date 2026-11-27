@@ -16,6 +16,8 @@ enum WineEngineKind: String, Codable, CaseIterable, Identifiable, Sendable {
     case classic
     /// Wine 11 (CrossOver 26.3 tree): newer Windows APIs, and every graphics layer
     case modern
+    /// miroe (experimental): ARM64-native Wine + FEX with Mullion for Direct3D 10/11/12, 64-bit programs only
+    case miroe
 
     var id: String { rawValue }
 }
@@ -26,6 +28,8 @@ enum WinePreference: String, Codable, CaseIterable, Identifiable, Sendable {
     case auto
     case classic
     case modern
+    /// Only when chosen: 자동 never picks the experimental engine
+    case miroe
 
     var id: String { rawValue }
 
@@ -34,6 +38,7 @@ enum WinePreference: String, Codable, CaseIterable, Identifiable, Sendable {
         case .auto: return "자동 (추천)"
         case .classic: return WineEngine.classic.title
         case .modern: return WineEngine.modern.title
+        case .miroe: return WineEngine.miroe.title
         }
     }
 }
@@ -48,6 +53,8 @@ enum GraphicsBackend: String, Codable, CaseIterable, Identifiable, Sendable {
     case dxvk
     /// Wine's own Direct3D (wined3d, and vkd3d for Direct3D 12)
     case wined3d
+    /// Mullion (DXMT fork, Direct3D 10/11/12 straight to Metal) with miroe's patches — the miroe engine only
+    case mullion
 
     var id: String { rawValue }
 
@@ -57,6 +64,7 @@ enum GraphicsBackend: String, Codable, CaseIterable, Identifiable, Sendable {
         case .d3dmetal: return "D3DMetal"
         case .dxvk: return "DXVK"
         case .wined3d: return "Wine 기본"
+        case .mullion: return "Mullion"
         }
     }
 }
@@ -109,9 +117,16 @@ struct WineEngine: Sendable {
     static let modern = WineEngine(
         kind: .modern, root: ModernEngine.wineRoot, wineName: "wine", bottleURL: MiroPaths.modernBottle
     )
+    static let miroe = WineEngine(
+        kind: .miroe, root: MiroeEngine.root, wineName: "wine", bottleURL: MiroPaths.miroeBottle
+    )
 
     static func of(_ kind: WineEngineKind) -> WineEngine {
-        kind == .classic ? .classic : .modern
+        switch kind {
+        case .classic: return .classic
+        case .modern: return .modern
+        case .miroe: return .miroe
+        }
     }
 
     var wineBinary: URL { root.appending(path: "bin").appending(path: wineName) }
@@ -124,6 +139,7 @@ struct WineEngine: Sendable {
         switch kind {
         case .classic: return "클래식 · Wine 7.7 + D3DMetal"
         case .modern: return "최신 · Wine \(ModernEngine.wineVersion)"
+        case .miroe: return "miroe (실험) · ARM64 + Mullion"
         }
     }
 
@@ -133,7 +149,13 @@ struct WineEngine: Sendable {
         return "\(title) + \(graphics.title)"
     }
 
-    var shortName: String { kind == .classic ? "클래식" : "최신" }
+    var shortName: String {
+        switch kind {
+        case .classic: return "클래식"
+        case .modern: return "최신"
+        case .miroe: return "miroe"
+        }
+    }
 
     var summary: String {
         switch kind {
@@ -142,6 +164,10 @@ struct WineEngine: Sendable {
         case .modern:
             return "CrossOver 26.3 오픈소스 기반 Wine 11. DXMT·D3DMetal·DXVK·Wine 기본 그래픽을 게임마다 바꿔 끼우고, "
                 + "안 되면 다음 방식으로 알아서 넘어가요. 최신 Windows 기능이 필요한 게임(예: Unity 6.3)도 실행돼요."
+        case .miroe:
+            return "실험 중인 차세대 엔진이에요. Rosetta 없이 ARM64로 돌고(게임의 Intel 코드는 FEX가 번역), "
+                + "DirectX 10/11/12를 Mullion으로 그려요(D3DMetal 없음). 지금은 64비트 프로그램만 돼요. "
+                + "자동으로는 고르지 않고, 다른 엔진으로 넘어가지도 않아요."
         }
     }
 
@@ -150,6 +176,7 @@ struct WineEngine: Sendable {
     func environment(for bottle: Bottle, graphics: GraphicsBackend? = nil) -> [String: String] {
         var env = Wine.environment(for: bottle)
         env["WINEPREFIX"] = bottleURL.path(percentEncoded: false)
+        if kind == .miroe { return Self.miroeEnvironment(env) }
         guard kind == .modern else { return env }
 
         // Host libraries (FreeType, GStreamer, MoltenVK …) live in the runtime frameworks folder
@@ -181,13 +208,28 @@ struct WineEngine: Sendable {
             env["DXVK_ASYNC"] = "1"
             env["DXVK_CONFIG_FILE"] = ModernEngine.dxvkFolder.appending(path: "dxvk.conf").path(percentEncoded: false)
             env["DXVK_STATE_CACHE_PATH"] = MiroPaths.shaderCache.path(percentEncoded: false)
-        case .wined3d:
+        case .wined3d, .mullion:  // Mullion runs on the miroe engine only
             break
         }
         env["DYLD_FALLBACK_LIBRARY_PATH"] = libraryPath
         env["DYLD_FALLBACK_FRAMEWORK_PATH"] = frameworkPath
         env["WINEDLLOVERRIDES"] = Self.mergeOverrides(env["WINEDLLOVERRIDES"], overrides)
         if graphics != .d3dmetal { env.removeValue(forKey: "D3DM_SUPPORT_DXR") }
+        return env
+    }
+
+    /// The miroe engine: FreeType bundled in the engine, FEX's code cache on disk, Mullion for every Direct3D
+    private static func miroeEnvironment(_ base: [String: String]) -> [String: String] {
+        var env = base
+        env["DYLD_FALLBACK_LIBRARY_PATH"] = MiroeEngine.libraries.path(percentEncoded: false)
+        env.removeValue(forKey: "DYLD_FALLBACK_FRAMEWORK_PATH")
+        env["FEX_DISKCACHE"] = "1"
+        env["FEX_DISKCACHEMAXFILESIZE"] = "4294967296"
+        env["MTLD3D_NO_CRASH_HANDLER"] = "1"
+        env.removeValue(forKey: "D3DM_SUPPORT_DXR")
+        // Set, not merged: a bottle's DXVK toggle would make dxgi/d3d11 native and hide Mullion's builtins
+        env["WINEDLLOVERRIDES"] = "d3d11,dxgi,d3d10core,d3d12,d3d12core,winemetal=b;mshtml=;winemenubuilder.exe=d"
+        env.removeValue(forKey: "DXVK_HUD")
         return env
     }
 
