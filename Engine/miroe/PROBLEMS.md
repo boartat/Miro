@@ -28,7 +28,7 @@ Wine 버그 트래커의 macOS 열린 버그 604건을 제목으로 나눴어요
 
 ## 선행 기술 조사와 미해결 문제 (2026-11-27)
 
-miroe는 이미 있는 기술을 다시 만들지 않아요. 아래는 공개된 성과를 모아 **채택할 것**, **고칠 것**, **직접 연구할 것**을 나눈 결과예요.
+miroe는 애플 실리콘 전용 ARM64 네이티브 Wine + FEX 엔진이에요(2026-11-27 확정). 아래 문제의 우선순위도 ARM64 네이티브 엔진 기준이고, x86_64 엔진은 대조군이에요. miroe는 이미 있는 기술을 다시 만들지 않아요. 아래는 공개된 성과를 모아 **채택할 것**, **고칠 것**, **직접 연구할 것**을 나눈 결과예요.
 
 **조사 범위 (2026-11-27)**: 아래 프로젝트의 열린 이슈 목록, DXMT의 2026-07 이후 커밋 전부, Mullion의 커밋 전부(키워드 검색), Wine GitLab의 macOS 관련 MR, FEX의 macOS·ARM64EC·TSO 이슈, 우선 이슈 8개의 본문과 댓글을 읽었어요. 닫힌 이슈와 PR은 이 문제들과 관련된 것만 확인했어요. 모든 프로젝트의 닫힌 이슈 전부를 읽은 것은 아니에요.
 
@@ -119,7 +119,7 @@ miroe는 이미 있는 기술을 다시 만들지 않아요. 아래는 공개된
 - **M2. VideoToolbox로 해독한 프레임을 복사 없이 D3D11 텍스처로** · C · 지금은 GStreamer(소프트웨어) → CPU 메모리 → GPU 업로드예요. 구현된 곳을 찾지 못했어요 · 상 · 4
 
 #### WoW64: 32비트
-- **W1. 32비트 게임의 DEP와 Metal placed 메모리** ([DXMT #161](https://github.com/3Shain/dxmt/issues/161)) · **C → miroe 해결 후보 (2026-11-27, [RESEARCH.md](RESEARCH.md) W1)** · `NX_COMPAT`가 없는 32비트 D3D10/11 게임 전부(옛 Unity, 비주얼 노벨, GOG 고전). DXMT와 DXVK 모두, Rosetta와 FEX 모두 · 중 · **1 (선정)**
+- **W1. 32비트 게임의 DEP와 Metal placed 메모리** ([DXMT #161](https://github.com/3Shain/dxmt/issues/161)) · **C → Rosetta 경로에서 해결 (연구 성과로 보존, [RESEARCH.md](RESEARCH.md) W1). ARM64 네이티브에서는 생기지 않을 것으로 보고 확인 대기** · `NX_COMPAT`가 없는 32비트 D3D10/11 게임 전부(옛 Unity, 비주얼 노벨, GOG 고전). DXMT와 DXVK 모두, Rosetta와 FEX 모두 · 중 · **1 (선정)**
   - 원인(알려짐): DEP가 꺼진 프로세스에서 Wine은 `force_exec_prot`로 모든 읽기 가능한 페이지에 `PROT_EXEC`를 붙여요. Tahoe의 Metal은 실행 가능한 placed 메모리를 몹시 싫어하고, Rosetta에서는 쓰기+실행 페이지를 처음 만질 때마다 Mach 왕복이 생겨요([athei/wine-build#3](https://github.com/athei/wine-build/issues/3): 190배). 따로, placed 버퍼가 가상 메모리 한 영역에 있지 않아서 프레임 캡처가 죽어요
   - 소스: DXMT `src/dxmt/dxmt_buffer.cpp`(`CpuPlaced` → `wsi::aligned_malloc`), Wine `dlls/ntdll/unix/virtual.c`(`force_exec_prot`), `loader.c`(NX 판단)
   - 우회책(B): exe 표시 바꾸기, Highball 0013(DEP를 항상 켬, 프로세스 전체에 영향)

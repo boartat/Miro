@@ -2,6 +2,8 @@
 
 miroe는 이미 문제를 풀고 있는 오픈소스 프로젝트들의 결과를 합친 **연구용 통합 엔진**이에요. 그 위에서 아직 아무도 풀지 못한 고수준 문제를 연구해요.
 
+**방향 (2026-11-27, 사용자 확정)**: miroe는 애플 실리콘 전용 ARM64 네이티브 Wine + FEX 엔진이에요. 모든 연구와 최적화는 ARM64 네이티브 엔진에서 하고, x86_64 엔진은 비교 대조군으로만 써요. 기반 구성은 [BASE.md](BASE.md)에 있어요.
+
 - **기반(ARM64 Wine + FEX + DXMT)은 성과가 아니에요.** MetalSharp, Hadron이 이미 해 놓은 걸 라이선스를 지켜 가져와요. 직접 다시 만들지 않아요.
 - **성과는 기반 위에서 측정한 실제 병목을 구조적으로 개선하는 것**이에요. 패치 개수보다 파급력과 검증 가능한 숫자를 우선해요.
 - 어떤 기술도 "세계 최초"라고 하지 않아요. 독창성은 구체적인 구현과 측정 결과로 판단해요.
@@ -201,6 +203,8 @@ ARM64 엔진을 만든 뒤 `tools/profile.sh`로 재요. 네이티브 프로세�
 
 #### 결과: W1, DEP가 꺼진 32비트 프로그램의 지연 실행 권한 (2026-11-27)
 
+> **Intel Wine + Rosetta에서의 독립 연구 성과로 보존해요.** Miro 1.2의 x86_64 엔진에는 넣지 않아요. ARM64 네이티브에서는 W^X 때문에 같은 조건(쓰기+실행 메모리 위의 Metal 버퍼)이 생기지 않을 것으로 보고, 실제 32비트 확인은 서명 권한이 생긴 뒤에 해요. 문제가 없으면 이 패치는 miroe에 넣지 않아요([BASE.md](BASE.md) 4장).
+
 [PROBLEMS.md](PROBLEMS.md)의 조사에서 아직 풀리지 않은 문제 중 파급력이 가장 큰 과제로 골랐어요. 측정은 모두 Rosetta 경로(Intel용 Wine 11.21 Staging + DXMT v0.80, macOS 27.2, M4 Pro)이고, 중립 테스트 프로그램만 썼어요.
 
 **1. 재현.** `Engine/tests/c/d3d11-game-test.c`를 32비트로 빌드하고 `NX_COMPAT` 표시만 다르게 한 두 파일로 쟀어요(20초).
@@ -240,7 +244,7 @@ macOS 27.2에서도 그대로예요(이슈에서 "macOS 27에서 고쳐졌는지
 
 - **정확성**: [`Engine/tests/c/dep-off-exec-test.c`](../tests/c/dep-off-exec-test.c)의 9가지 경우를 각각 따로 실행했어요. VirtualAlloc·힙·malloc·.data·스택에서 코드 실행, 실행한 뒤 고쳐 쓴 코드, 페이지 경계에 걸친 명령어, VirtualProtect 뒤 실행이에요. 원래 Wine과 같이 모두 통과했고, DEP가 켜진 빌드에서는 모두 막혔어요(Windows와 같아요).
 - **64비트**는 영향이 없어요(작은 discard 3.345 / 3.341ms).
-- **남은 것**: 실제 32비트 게임 확인(사용자가 직접), CrossOver 26.3 트리 Wine 11(Miro 1.2의 최신 엔진)과 Wine 7.7 GPTK(클래식 엔진)에 옮기기, 실행 fault가 아주 많은 JIT 프로그램의 비용 측정, ARM64 + FEX 경로(호스트가 쓰기+실행을 허용하지 않아서 이 문제가 다르게 나타나요)
+- **남은 것**: ARM64 + FEX 엔진에서 32비트 프로그램으로 같은 문제가 없는지 확인(서명 권한이 생긴 뒤). x86_64 엔진에는 옮기지 않아요
 - 스크립트: [`scripts/w1-matrix.sh`](scripts/w1-matrix.sh), [`scripts/w1-depexec.sh`](scripts/w1-depexec.sh), [`scripts/w1-report.py`](scripts/w1-report.py)
 
 ### 5순위: 셰이더 컴파일

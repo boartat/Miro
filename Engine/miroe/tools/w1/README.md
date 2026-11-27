@@ -16,6 +16,7 @@ clang -arch x86_64 -O2 -fobjc-arc -framework Metal -framework Foundation -o meta
 | `metal-rwx-probe.m` | A no-copy Metal buffer over writable+executable memory: the first CPU read after GPU work takes about 1.2 s, whatever the size (1 to 32 MB); over writable memory it takes 0.03 ms |
 | `metal-rwx-variants.m` | What avoids it in a plain process: memory without `PROT_EXEC`, dropping `PROT_EXEC` after the buffer is made, or a CPU touch of every page before the GPU uses it |
 | `metal-rwx-reuse.m` | Buffers made again over reused memory, and memory reserved `PROT_NONE` and later made accessible, as Wine does |
+| `metal-arm64-probe.m` | The same question natively on arm64: plain writable+executable memory is refused (W^X), and GPU writes to read+execute memory do not stall the CPU (0.004 ms). Build with `-arch arm64` |
 | `w1-hook.m` | A research hook (not for shipping): wraps `newBufferWithBytesNoCopy` in a Wine process through `DYLD_INSERT_LIBRARIES`, logs the protection of every placed buffer and can drop `PROT_EXEC` or touch the pages first (`MIROE_W1_HOOK=log|noexec|touch`) |
 
 Build the hook universal so the arm64 helper tools of a launch script can load it too (it does nothing there):

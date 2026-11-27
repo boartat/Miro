@@ -1,11 +1,14 @@
 # miroe
 
-Miro의 차세대 엔진이에요. **애플 실리콘 Mac 전용 Wine 기반 엔진**으로, Wine 개발자들이 이미 알고 있는 문제를 Mac 고유 기술로 보완하는 게 목표예요. 연구 단계라서 Miro 앱에는 들어가 있지 않아요.
+Miro의 차세대 엔진이에요. **애플 실리콘 전용 ARM64 네이티브 Wine + FEX 엔진**이에요. 범용 지원을 애플 실리콘 하나로 줄이는 대신, 여러 병목을 없애고 성능을 올리는 게 목표예요. 연구 단계라서 Miro 앱에는 들어가 있지 않아요.
+
+- 모든 연구와 최적화는 ARM64 네이티브 엔진에서 해요. 기존 x86_64 엔진(Miro 1.2의 CrossOver 트리 Wine 11, Wine 7.7 GPTK, 실습실의 WineHQ 11.21)은 비교 대조군으로만 써요.
+- 기반 구성 검토(upstream Wine의 ARM64 macOS 지원과 Hadron 비교): [BASE.md](BASE.md)
 
 **지금 상태 (2026-11-27)**
 - ARM64 Wine 11.22 + FEX + DXMT 연구 엔진을 빌드했어요(Hadron 기준, `scripts/`). Apple Developer 계정이 없어서 지금은 64비트 프로그램만 돌아요.
 - 첫 연구 성과 **MUMA v1**: 큰 `WRITE_DISCARD` 몰아치기 뒤 남던 메모리가 버퍼 920 → 308MB, 제출을 멈춘 앱 920 → 308MB, 동적 텍스처 968 → 200MB로 줄었어요. 예비 블록은 purgeable로 표시해서 재사용할 수 있게 둔 채 메모리 사용량에서 빼요. 속도는 그대로예요. 게임 한 판을 흉내 낸 테스트에서는 교전 뒤 메모리가 30~41% 줄었고, 프레임 시간 차이는 없었어요. 자세한 건 [RESEARCH.md](RESEARCH.md)에 있어요.
-- **W1 (32비트 게임 슬라이드쇼, DXMT #161)**: Rosetta에서 쓰기+실행 메모리 위의 Metal 버퍼가 CPU를 약 1.2초씩 멈추게 하는 것을 찾았어요. DEP가 꺼진 프로그램에 실행 권한을 필요할 때만 주는 Wine 패치로, `NX_COMPAT` 없는 32비트 테스트가 35 → 1,997프레임이 됐어요(코드 실행 동작은 그대로). [`patches/wine-x86_64`](patches/wine-x86_64)
+- **W1 (32비트 게임 슬라이드쇼, DXMT #161), Intel Wine + Rosetta에서의 독립 연구**: Rosetta에서 쓰기+실행 메모리 위의 Metal 버퍼가 CPU를 약 1.2초씩 멈추게 하는 것을 찾았어요. DEP가 꺼진 프로그램에 실행 권한을 필요할 때만 주는 Wine 패치로, `NX_COMPAT` 없는 32비트 테스트가 35 → 1,997프레임이 됐어요(코드 실행 동작은 그대로). [`patches/wine-x86_64`](patches/wine-x86_64). Miro 1.2의 엔진에는 넣지 않아요. ARM64에서는 W^X 때문에 같은 조건이 생기지 않을 것으로 보고, 32비트 확인은 서명 권한이 생긴 뒤에 해요([BASE.md](BASE.md) 4장)
 - **MUMA v2**: [DXVK](https://github.com/doitsujin/dxvk)(zlib) 메모리 할당기의 정책(유휴 한도, Metal 메모리 예산, 한 번에 푸는 양)을 참고해 더했어요(코드는 복사하지 않음). 큰 Mac에서는 v1과 같고, 예산 800MB를 흉내 내면 교전 중 최대 메모리가 고르게 묶여요(최대 1,365 → 1,157MB). 프레임 시간 차이는 없어요.
 
 - [RESEARCH.md](RESEARCH.md): 통합 연구 엔진 계획 (합칠 프로젝트, 라이선스, 연구 과제 순위)
@@ -63,8 +66,8 @@ Engine/miroe/tools/profile.sh <결과 폴더> <C: 드라이브> 8 -- <실행 스
 
 | 층 | miroe |
 | --- | --- |
-| CPU | ARM64로 네이티브 실행 (ARM64EC Wine). 게임의 Intel 코드만 [FEX](https://github.com/FEX-Emu/FEX)(MIT)로 번역 |
-| 그래픽 | DXMT + Miro Metal Bridge. Wine에 공식 Metal 통로가 생기면 갈아타기 |
+| CPU | ARM64로 네이티브 실행 (upstream Wine의 ARM64 macOS 지원, 4K 페이지). 게임의 Intel 코드만 [FEX](https://github.com/FEX-Emu/FEX)(MIT)로 번역 |
+| 그래픽 | DXMT 또는 Mullion (D3D10/11/12, 비교 후 결정). Wine에 공식 Metal 통로가 생기면 갈아타기 |
 | 동기화 | Mach 세마포어 기반 [msync](https://github.com/marzent/wine-msync)(LGPL-2.1) |
 | 글꼴 | Mac 시스템 글꼴 연결, 이어서 GDI+ 수정 |
 | 동영상·입력·오디오 | VideoToolbox, GameController, CoreAudio (PROBLEMS.md 6~9번) |
