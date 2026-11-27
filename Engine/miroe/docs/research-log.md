@@ -1,8 +1,8 @@
-# miroe 연구 계획: 통합 연구 엔진
+# miroe 연구 기록 (상세)
 
 miroe는 이미 문제를 풀고 있는 오픈소스 프로젝트들의 결과를 합친 **연구용 통합 엔진**이에요. 그 위에서 아직 아무도 풀지 못한 고수준 문제를 연구해요.
 
-**방향 (2026-11-27, 사용자 확정)**: miroe는 애플 실리콘 전용 ARM64 네이티브 Wine + FEX 엔진이에요. 모든 연구와 최적화는 ARM64 네이티브 엔진에서 하고, x86_64 엔진은 비교 대조군으로만 써요. 기반 구성은 [BASE.md](BASE.md)에 있어요.
+**방향 (2026-11-27, 사용자 확정)**: miroe는 애플 실리콘 전용 ARM64 네이티브 Wine + FEX 엔진이에요. 모든 연구와 최적화는 ARM64 네이티브 엔진에서 하고, x86_64 엔진은 비교 대조군으로만 써요. 기반 구성은 [base.md](base.md)에 있어요.
 
 - **기반(ARM64 Wine + FEX + DXMT)은 성과가 아니에요.** MetalSharp, Hadron이 이미 해 놓은 걸 라이선스를 지켜 가져와요. 직접 다시 만들지 않아요.
 - **성과는 기반 위에서 측정한 실제 병목을 구조적으로 개선하는 것**이에요. 패치 개수보다 파급력과 검증 가능한 숫자를 우선해요.
@@ -68,7 +68,7 @@ Engine/miroe/
 
 **원인** (DXMT 소스 `src/dxmt/dxmt_dynamic.cpp`): `WRITE_DISCARD`를 할 때 GPU가 아직 옛 메모리를 쓰고 있으면, `DynamicBuffer`가 버퍼 크기만큼 새 블록을 받아요. 옛 블록은 재사용 대기열에 들어가는데, 이 대기열은 줄어들지 않아요. 그래서 몰아치기 동안 동시에 쓰인 블록 수 × 버퍼 크기가 버퍼가 살아 있는 동안 계속 남아요. 제보자의 수정은 그 버퍼가 다시 쓰일 때만 대기열을 줄여서, 몰아치기 뒤 쉬는 버퍼의 메모리는 그대로 남아요.
 
-**MUMA v0** ([`patches/dxmt/0001`](patches/dxmt)):
+**MUMA v0** ([`patches/dxmt/0001`](../patches/dxmt)):
 - 명령 큐(장치)마다 예비 블록을 가진 동적 버퍼의 목록을 둬요.
 - GPU 완료를 기다리는 스레드가 16번 완료마다 300회 이상 쓰이지 않은 예비 블록을 풀어요.
 - 시퀀스 번호가 큐마다 달라서 목록도 큐마다 따로 둬요. 장치가 여럿이어도 쓰는 중인 메모리를 풀지 않아요.
@@ -78,7 +78,7 @@ ARM64 Wine 11.22 + FEX + DXMT(Hadron 기준), M4 Pro, `Engine/tests/c/d3d11-memo
 | DXMT | 몰아치기 뒤 GPU 메모리 | 몰아치기 속도 (3회 평균) |
 | --- | ---: | ---: |
 | 원래 | 920MB | 1.462ms/프레임 |
-| A: #260 제보자 수정 ([`patches/experiments`](patches/experiments)) | 920MB | 1.466ms/프레임 |
+| A: #260 제보자 수정 ([`patches/experiments`](../patches/experiments)) | 920MB | 1.466ms/프레임 |
 | **B: MUMA v0** | **312MB** (약 2초 안에 회복) | 1.463ms/프레임 |
 
 - 312MB는 테스트가 실제로 쓰는 버퍼 크기예요(40+48+64MB × 동적·기본 2벌). **쓰는 만큼만 남았어요.**
@@ -89,7 +89,7 @@ ARM64 Wine 11.22 + FEX + DXMT(Hadron 기준), M4 Pro, `Engine/tests/c/d3d11-memo
 
 v0에서 남은 빈틈 두 개를 테스트로 먼저 확인했어요. 하나는 제출을 멈춘 앱에서 회수가 돌지 않는 것, 다른 하나는 동적 2D 텍스처가 v0가 다루지 않는 `DynamicLinearTexture` 경로로 간다는 것이에요.
 
-**MUMA v1** ([`patches/dxmt/0002`](patches/dxmt), v0 위에 적용):
+**MUMA v1** ([`patches/dxmt/0002`](../patches/dxmt), v0 위에 적용):
 - 동적 버퍼와 동적 텍스처가 같은 기반(`DynamicSpareHolder`)과 큐별 목록을 써요.
 - 명령 큐마다 회수 스레드가 0.25초마다 돌아요. GPU가 다 썼고 2초 지난 예비 블록을 풀어요. 그래서 제출이 멈춰도 회수돼요.
 - 1MB 이상 버퍼의 예비 블록은 GPU가 다 쓰자마자 purgeable(volatile)로 표시하고, 다시 쓸 때 원래대로 돌려요. winemetal에 `MTLResource_setPurgeableState`(유닉스 호출 146)를 더했어요.
@@ -152,7 +152,7 @@ ARM64 Wine + FEX + DXMT, 경우마다 3번 실행한 평균(± 범위의 절반)
 
 #### 결과: MUMA v2, DXVK 참고 (2026-11-27)
 
-**MUMA v2** ([`patches/dxmt/0003`](patches/dxmt), v1 위에 적용)는 [DXVK](https://github.com/doitsujin/dxvk)(zlib) 메모리 할당기의 검증된 정책을 더했어요. DXVK 코드를 복사하지 않고, 정책을 DXMT 구조에 맞게 다시 구현했어요. 코드 주석에 DXVK 파일과 함수 이름을 적었어요.
+**MUMA v2** ([`patches/dxmt/0003`](../patches/dxmt), v1 위에 적용)는 [DXVK](https://github.com/doitsujin/dxvk)(zlib) 메모리 할당기의 검증된 정책을 더했어요. DXVK 코드를 복사하지 않고, 정책을 DXMT 구조에 맞게 다시 구현했어요. 코드 주석에 DXVK 파일과 함수 이름을 적었어요.
 
 | | 어디서 | 내용 |
 | --- | --- | --- |
@@ -161,7 +161,7 @@ ARM64 Wine + FEX + DXMT, 경우마다 3번 실행한 평균(± 범위의 절반)
 | 가져온 것 | 같은 파일 (한 번에 청크 하나) | 시간 규칙은 한 번에 최대 256MB만 풀어요 |
 | MUMA 고유 | | 제출과 상관없는 회수 스레드(DXVK의 timed task는 제출 직후에만 돌아요, `dxvk_queue.cpp`), purgeable, 잠금 없는 등록, 동적 텍스처, 2초 규칙 |
 
-측정용 스위치: `MIROE_MUMA_MAX_IDLE_MB`, `MIROE_MUMA_BUDGET_MB`(작은 Mac 흉내). 이 Mac(M4 Pro 24GB)의 예산은 18,004MB예요. 스크립트: [`scripts/v2-matrix.sh`](scripts/v2-matrix.sh), [`scripts/v2-report.py`](scripts/v2-report.py).
+측정용 스위치: `MIROE_MUMA_MAX_IDLE_MB`, `MIROE_MUMA_BUDGET_MB`(작은 Mac 흉내). 이 Mac(M4 Pro 24GB)의 예산은 18,004MB예요. 스크립트: [`scripts/v2-matrix.sh`](../scripts/v2-matrix.sh), [`scripts/v2-report.py`](../scripts/v2-report.py).
 
 **회귀 (v1과 같아야 함)**: 버퍼 308MB, 제출 멈춤 308MB, 텍스처 196MB(GPU 메모리). 재사용 데이터 확인 통과. 작은 discard 3.243ms/프레임(v1 3.262).
 
@@ -203,13 +203,13 @@ ARM64 엔진을 만든 뒤 `tools/profile.sh`로 재요. 네이티브 프로세�
 
 #### MUMA on Mullion (2026-11-27)
 
-miroe의 기본 그래픽 백엔드를 Mullion으로 정하면서 MUMA v2를 Mullion에 옮겼어요([`patches/mullion/0002`](patches/mullion)). Mullion 원래도 DXMT와 같이 예비 블록을 회수하지 않아서 #260이 그대로였고(923MB), 이식판은 DXMT판과 같은 결과예요(308MB, 텍스처 199MB, 게임형 테스트에서 GPU −48~53%). Mullion의 하트비트(residency set)가 purgeable 예비 블록을 계속 상주시키는 충돌을 찾아서 고쳤어요. 자세한 표와 Mullion 메모리 관리와의 관계는 [BASE.md](BASE.md) 5장에 있어요.
+miroe의 기본 그래픽 백엔드를 Mullion으로 정하면서 MUMA v2를 Mullion에 옮겼어요([`patches/mullion/0002`](../patches/mullion)). Mullion 원래도 DXMT와 같이 예비 블록을 회수하지 않아서 #260이 그대로였고(923MB), 이식판은 DXMT판과 같은 결과예요(308MB, 텍스처 199MB, 게임형 테스트에서 GPU −48~53%). Mullion의 하트비트(residency set)가 purgeable 예비 블록을 계속 상주시키는 충돌을 찾아서 고쳤어요. 자세한 표와 Mullion 메모리 관리와의 관계는 [base.md](base.md) 5장에 있어요.
 
 #### 결과: W1, DEP가 꺼진 32비트 프로그램의 지연 실행 권한 (2026-11-27)
 
-> **Intel Wine + Rosetta에서의 독립 연구 성과로 보존해요.** Miro 1.2의 x86_64 엔진에는 넣지 않아요. ARM64 네이티브에서는 W^X 때문에 같은 조건(쓰기+실행 메모리 위의 Metal 버퍼)이 생기지 않을 것으로 보고, 실제 32비트 확인은 서명 권한이 생긴 뒤에 해요. 문제가 없으면 이 패치는 miroe에 넣지 않아요([BASE.md](BASE.md) 4장).
+> **Intel Wine + Rosetta에서의 독립 연구 성과로 보존해요.** Miro 1.2의 x86_64 엔진에는 넣지 않아요. ARM64 네이티브에서는 W^X 때문에 같은 조건(쓰기+실행 메모리 위의 Metal 버퍼)이 생기지 않을 것으로 보고, 실제 32비트 확인은 서명 권한이 생긴 뒤에 해요. 문제가 없으면 이 패치는 miroe에 넣지 않아요([base.md](base.md) 4장).
 
-[PROBLEMS.md](PROBLEMS.md)의 조사에서 아직 풀리지 않은 문제 중 파급력이 가장 큰 과제로 골랐어요. 측정은 모두 Rosetta 경로(Intel용 Wine 11.21 Staging + DXMT v0.80, macOS 27.2, M4 Pro)이고, 중립 테스트 프로그램만 썼어요.
+[problems.md](problems.md)의 조사에서 아직 풀리지 않은 문제 중 파급력이 가장 큰 과제로 골랐어요. 측정은 모두 Rosetta 경로(Intel용 Wine 11.21 Staging + DXMT v0.80, macOS 27.2, M4 Pro)이고, 중립 테스트 프로그램만 썼어요.
 
 **1. 재현.** `Engine/tests/c/d3d11-game-test.c`를 32비트로 빌드하고 `NX_COMPAT` 표시만 다르게 한 두 파일로 쟀어요(20초).
 
@@ -220,7 +220,7 @@ miroe의 기본 그래픽 백엔드를 Mullion으로 정하면서 MUMA v2를 Mul
 
 macOS 27.2에서도 그대로예요(이슈에서 "macOS 27에서 고쳐졌는지" 묻는 댓글이 있었어요). 멈춤 길이는 이슈 댓글의 측정(1.15~1.25초)과 같아요.
 
-**2. 원인 분리 (Wine 없이).** [`tools/w1/`](tools/w1)의 작은 Mac 프로그램을 x86_64로 빌드해서 Rosetta에서 돌렸어요.
+**2. 원인 분리 (Wine 없이).** [`tools/w1/`](../tools/w1)의 작은 Mac 프로그램을 x86_64로 빌드해서 Rosetta에서 돌렸어요.
 - CPU만 쓰면 쓰기+실행 메모리도 보통 메모리와 같은 속도예요(64MB 첫 쓰기 9ms). 페이지 첫 접근 비용이 원인이 아니에요.
 - **그 메모리 위에 Metal no-copy 버퍼를 만들고 GPU가 쓰면, 다음 CPU 접근이 약 1.1~1.25초 멈춰요.** 버퍼 크기(1~32MB)와 상관없이 버퍼마다 한 번이에요. 실행 권한이 없으면 0.03ms예요.
 - 실행 권한이 없는 코드 페이지를 실행하면 Rosetta가 fault를 내고, 그때 실행 권한을 주면 이어서 실행돼요. 지연 실행 권한이 가능한 근거예요.
@@ -229,7 +229,7 @@ macOS 27.2에서도 그대로예요(이슈에서 "macOS 27에서 고쳐졌는지
 - `NX_COMPAT` 없음: placed 버퍼 452개가 **모두** 실행 가능한 메모리 위에 있었어요. 있음: 0개.
 - 버퍼를 만들기 직전에 그 메모리의 실행 권한만 빼면 1,997프레임(정상)이 됐어요. 반대로 페이지를 미리 만져 두는 방법은 작은 프로그램에서는 통했지만 Wine 안에서는 효과가 없었어요(35프레임). DXMT 쪽 실험 커밋으로 남겨 뒀어요.
 
-**4. 해결: Wine의 지연 실행 권한** ([`patches/wine-x86_64/0001`](patches/wine-x86_64))
+**4. 해결: Wine의 지연 실행 권한** ([`patches/wine-x86_64/0001`](../patches/wine-x86_64))
 - DEP가 꺼져도 미리 모든 페이지에 `PROT_EXEC`를 붙이지 않아요. 읽을 수 있는 페이지에서 **처음 실행 fault가 나면 그 페이지에만** 실행 권한을 주고 다시 실행해요.
 - Rosetta는 명령어 가져오기를 읽기 fault로 알릴 수 있어서, macOS에서는 fault 주소가 명령어 포인터에서 16바이트 안이면 실행 fault로 봐요. 이미 실행 가능한 페이지면 건너뛰어요(무한 반복 방지).
 - DEP를 다시 켜면 지연으로 받은 실행 권한을 거둬요. macOS에서 기본으로 켜지고, `WINE_LAZY_EXEC=0`이면 원래 동작이에요.
@@ -246,10 +246,10 @@ macOS 27.2에서도 그대로예요(이슈에서 "macOS 27에서 고쳐졌는지
 | 원래 Wine, `NX_COMPAT` 있음 | 1.47 / 1.74 | 3.15 / 10.57 |
 | **지연 실행 권한, `NX_COMPAT` 없음** | 1.49 / 1.75 | 3.18 / 10.66 |
 
-- **정확성**: [`Engine/tests/c/dep-off-exec-test.c`](../tests/c/dep-off-exec-test.c)의 9가지 경우를 각각 따로 실행했어요. VirtualAlloc·힙·malloc·.data·스택에서 코드 실행, 실행한 뒤 고쳐 쓴 코드, 페이지 경계에 걸친 명령어, VirtualProtect 뒤 실행이에요. 원래 Wine과 같이 모두 통과했고, DEP가 켜진 빌드에서는 모두 막혔어요(Windows와 같아요).
+- **정확성**: [`Engine/tests/c/dep-off-exec-test.c`](../../tests/c/dep-off-exec-test.c)의 9가지 경우를 각각 따로 실행했어요. VirtualAlloc·힙·malloc·.data·스택에서 코드 실행, 실행한 뒤 고쳐 쓴 코드, 페이지 경계에 걸친 명령어, VirtualProtect 뒤 실행이에요. 원래 Wine과 같이 모두 통과했고, DEP가 켜진 빌드에서는 모두 막혔어요(Windows와 같아요).
 - **64비트**는 영향이 없어요(작은 discard 3.345 / 3.341ms).
 - **남은 것**: ARM64 + FEX 엔진에서 32비트 프로그램으로 같은 문제가 없는지 확인(서명 권한이 생긴 뒤). x86_64 엔진에는 옮기지 않아요
-- 스크립트: [`scripts/w1-matrix.sh`](scripts/w1-matrix.sh), [`scripts/w1-depexec.sh`](scripts/w1-depexec.sh), [`scripts/w1-report.py`](scripts/w1-report.py)
+- 스크립트: [`scripts/w1-matrix.sh`](../scripts/w1-matrix.sh), [`scripts/w1-depexec.sh`](../scripts/w1-depexec.sh), [`scripts/w1-report.py`](../scripts/w1-report.py)
 
 ### 5순위: 셰이더 컴파일
 

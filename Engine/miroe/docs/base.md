@@ -59,7 +59,7 @@ miroe는 **애플 실리콘 전용 ARM64 네이티브 Wine + FEX 엔진**이에�
 | FEX | upstream FEX 고정 커밋 + Hadron FEX macOS 패치 7개 (MIT) | macOS 지원은 아직 Hadron에만 있어요 |
 | D3D10/11/12 | **Mullion을 기본 그래픽 백엔드로** (LGPL, DXMT 포크, D3D12 FL 12_2) + MUMA 이식 패치 | 2026-11-27 사용자 결정. 아래 5장의 검증 결과. D3DMetal에 기대지 않는 오픈소스 D3D12 |
 | D3D9 / OpenGL / Vulkan | mtld3d (zlib) / WineMetalGL (LGPL) / KosmicKrisp (MIT) | 이미 ARM64 Wine에서 쓰이고 있어요 |
-| 동기화 | msync 계열 채택 연구 (MetalSharp-Wine의 LGPL Wine 변경) | PROBLEMS.md Y1 (Unity 스레드 시간의 55%) |
+| 동기화 | msync 계열 채택 연구 (MetalSharp-Wine의 LGPL Wine 변경) | problems.md Y1 (Unity 스레드 시간의 55%) |
 | 빌드 | miroe 자체 스크립트 (`scripts/`), llvm-mingw | Hadron 스크립트에서 출발했지만 Hadron 앱 전용 부분은 빼요 |
 | 대조군 | x86_64 엔진들, 지금의 Hadron dev 엔진 | 같은 테스트로 비교만 해요 |
 
@@ -80,7 +80,7 @@ miroe는 **애플 실리콘 전용 ARM64 네이티브 Wine + FEX 엔진**이에�
 W1(DEP가 꺼진 32비트 프로그램의 슬라이드쇼, DXMT #161)은 **Intel Wine + Rosetta에서의 독립 연구 성과로 보존**해요. Miro 1.2의 엔진에는 넣지 않아요.
 
 ARM64에서는 같은 문제가 구조적으로 생기지 않을 것으로 봐요.
-- 원인은 "쓰기+실행 메모리 위의 Metal no-copy 버퍼"예요. ARM64 macOS는 보통 메모리에 쓰기+실행을 허락하지 않아요(`mmap`·`mprotect` 모두 Permission denied, [`tools/w1/metal-arm64-probe.m`](tools/w1/metal-arm64-probe.m)).
+- 원인은 "쓰기+실행 메모리 위의 Metal no-copy 버퍼"예요. ARM64 macOS는 보통 메모리에 쓰기+실행을 허락하지 않아요(`mmap`·`mprotect` 모두 Permission denied, [`tools/w1/metal-arm64-probe.m`](../tools/w1/metal-arm64-probe.m)).
 - upstream(9d639791)과 Hadron(0002)은 모두 쓰기 가능한 페이지를 실행 권한 없이 두고, 실행할 때만 읽기+실행으로 바꿔요. placed 메모리는 실행되지 않으니 계속 읽기+쓰기예요.
 - 읽기+실행 메모리를 GPU가 써도 다음 CPU 접근은 0.004ms였어요(멈춤 없음). MAP_JIT 메모리는 프로브가 SIGBUS로 끝나 재지 못했어요. MAP_JIT는 FEX의 JIT 코드 버퍼에만 쓰여서 placed 메모리와 겹치지 않아요.
 - **실제 32비트 프로그램으로 하는 확인은 권한이 생긴 뒤에 해요.** 지금 dev 엔진은 64비트만 돌아요. 그때 문제가 없으면 W1 패치는 miroe에 넣지 않아요.
@@ -89,13 +89,13 @@ ARM64에서는 같은 문제가 구조적으로 생기지 않을 것으로 봐�
 
 사용자 결정으로 Mullion을 기본 그래픽 백엔드로 정했어요. D3DMetal(닫힌 소스)에 기대지 않고 오픈소스로 D3D12까지 가는 길이에요. 실습실 ARM64 엔진(Hadron dev, 64비트)에 Mullion `0f22b2c`를 올려서 확인했어요.
 
-**빌드**: Mullion은 DXMT와 구조가 같아요(`src/dxmt` → `src/mullion`). ARM64X 링크 오류 하나만 Hadron의 DXMT 패치를 그대로 써서 고쳤어요([`patches/mullion/0001`](patches/mullion)). D3D12 DLL(`d3d12.dll`, `d3d12core.dll`)도 같이 빌드돼요.
+**빌드**: Mullion은 DXMT와 구조가 같아요(`src/dxmt` → `src/mullion`). ARM64X 링크 오류 하나만 Hadron의 DXMT 패치를 그대로 써서 고쳤어요([`patches/mullion/0001`](../patches/mullion)). D3D12 DLL(`d3d12.dll`, `d3d12core.dll`)도 같이 빌드돼요.
 
-**D3D12 기본 동작** ([`Engine/tests/c/d3d12-smoke-test.c`](../tests/c/d3d12-smoke-test.c), 창·셰이더 없음): 기능 수준 **12_2**를 알리고, 렌더 타깃 지우기 → 복사 → 읽기의 65,536픽셀이 모두 맞아요. 프레임당 0.21ms.
+**D3D12 기본 동작** ([`Engine/tests/c/d3d12-smoke-test.c`](../../tests/c/d3d12-smoke-test.c), 창·셰이더 없음): 기능 수준 **12_2**를 알리고, 렌더 타깃 지우기 → 복사 → 읽기의 65,536픽셀이 모두 맞아요. 프레임당 0.21ms.
 
-**D3D12 셰이더** ([`Engine/tests/c/d3d12-shader-test.c`](../tests/c/d3d12-shader-test.c), HLSL을 실행 중에 SM 5.0 DXBC로 컴파일): 루트 상수를 쓰는 픽셀 셰이더 그리기, 셰이더용 디스크립터 테이블과 정적 샘플러로 텍스처 읽기, UAV 버퍼에 쓰는 컴퓨트 셰이더가 **모두 정확해요**(65,536픽셀 ×2, 1,024값). 원래 Mullion과 MUMA 판 모두 같아요. 그리기 + 펜스 대기 0.21ms. 그래픽 파이프라인은 처음 1회 39.8ms, 셰이더 캐시가 찬 뒤 1.5ms. 
+**D3D12 셰이더** ([`Engine/tests/c/d3d12-shader-test.c`](../../tests/c/d3d12-shader-test.c), HLSL을 실행 중에 SM 5.0 DXBC로 컴파일): 루트 상수를 쓰는 픽셀 셰이더 그리기, 셰이더용 디스크립터 테이블과 정적 샘플러로 텍스처 읽기, UAV 버퍼에 쓰는 컴퓨트 셰이더가 **모두 정확해요**(65,536픽셀 ×2, 1,024값). 원래 Mullion과 MUMA 판 모두 같아요. 그리기 + 펜스 대기 0.21ms. 그래픽 파이프라인은 처음 1회 39.8ms, 셰이더 캐시가 찬 뒤 1.5ms. 
 
-**SM 6 (DXIL) 셰이더** ([`Engine/tests/c/d3d12-sm6-test.c`](../tests/c/d3d12-sm6-test.c), 셰이더는 [`sm6/`](../tests/c/sm6)의 HLSL을 Microsoft DXC 1.9.2609로 미리 컴파일한 서명된 DXIL): 장치는 **셰이더 모델 6.7**, 웨이브 연산(32레인), 네이티브 16비트, 리소스 바인딩 Tier 3을 알려요. SM 6.0 그리기(65,536픽셀), SM 6.0 웨이브 연산(레인 번호·누적 합·웨이브 합, 256스레드), SM 6.2 16비트 정수·실수(256값), SM 6.6 디스크립터 힙 직접 접근(`ResourceDescriptorHeap[]`, 1,024값)이 **모두 정확해요**. 원래 Mullion과 MUMA 판이 같아요.
+**SM 6 (DXIL) 셰이더** ([`Engine/tests/c/d3d12-sm6-test.c`](../../tests/c/d3d12-sm6-test.c), 셰이더는 [`sm6/`](../../tests/c/sm6)의 HLSL을 Microsoft DXC 1.9.2609로 미리 컴파일한 서명된 DXIL): 장치는 **셰이더 모델 6.7**, 웨이브 연산(32레인), 네이티브 16비트, 리소스 바인딩 Tier 3을 알려요. SM 6.0 그리기(65,536픽셀), SM 6.0 웨이브 연산(레인 번호·누적 합·웨이브 합, 256스레드), SM 6.2 16비트 정수·실수(256값), SM 6.6 디스크립터 힙 직접 접근(`ResourceDescriptorHeap[]`, 1,024값)이 **모두 정확해요**. 원래 Mullion과 MUMA 판이 같아요.
 - DXC는 지금 dev 엔진에서 돌지 않아요(`KUSER_SHARED_DATA`를 고정 주소로 읽는데, dev 엔진은 그 영역을 4GB 위로 옮겼어요). 그래서 Intel 실습실 엔진에서 미리 컴파일했어요. 서명 권한이 생긴 엔진에서는 문제가 없을 거예요.
 - 아직 확인하지 않은 것: 메시 셰이더, 레이 트레이싱, SM 6.7의 고급 텍스처 연산(Mullion README에서도 미완성)
 
@@ -134,7 +134,7 @@ ARM64에서는 같은 문제가 구조적으로 생기지 않을 것으로 봐�
 
 ## 6. upstream Wine ARM64 빌드 준비 (2026-11-27)
 
-[`scripts/build-wine-upstream.sh`](scripts/build-wine-upstream.sh)로 upstream Wine `ecca8e7552`(11.22-280, `sources.conf`의 `wine-upstream`)를 aarch64 + arm64ec + i386 PE로 **빌드했어요**. 로더는 `wine.app` 묶음으로 만들어져요. 서명 정보 없이 빌드해서 ad-hoc 서명이고, 실행하면 macOS가 바로 종료시켜요(exit 137). 예상대로예요.
+[`scripts/build-wine-upstream.sh`](../scripts/build-wine-upstream.sh)로 upstream Wine `ecca8e7552`(11.22-280, `sources.conf`의 `wine-upstream`)를 aarch64 + arm64ec + i386 PE로 **빌드했어요**. 로더는 `wine.app` 묶음으로 만들어져요. 서명 정보 없이 빌드해서 ad-hoc 서명이고, 실행하면 macOS가 바로 종료시켜요(exit 137). 예상대로예요.
 
 개발자 계정이 열리면 할 일:
 1. App ID와 개발용 provisioning profile을 만들어요(사용자가 직접, 위키의 순서).

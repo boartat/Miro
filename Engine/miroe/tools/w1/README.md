@@ -25,4 +25,4 @@ Build the hook universal so the arm64 helper tools of a launch script can load i
 clang -arch x86_64 -arch arm64 -arch arm64e -O2 -dynamiclib -fobjc-arc -framework Metal -framework Foundation -o w1-hook.dylib w1-hook.m
 ```
 
-Results and the Wine patch are in [`../../RESEARCH.md`](../../RESEARCH.md) (W1).
+Results and the Wine patch are in [`../../docs/research-log.md`](../../docs/research-log.md) (W1).

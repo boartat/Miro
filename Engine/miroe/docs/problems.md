@@ -2,7 +2,7 @@
 
 miroe는 Miro의 차세대 엔진이에요. **애플 실리콘 Mac 전용**으로, Wine 개발자와 Mac Wine 프로젝트들이 이미 알고 있는 문제를 모아서 그 약한 부분을 Mac 고유 기술로 보완하는 게 목표예요.
 
-측정 결과와 첫 개선은 [README.md](README.md)에 있어요. 이 문서는 2026-11-26에 모은 자료예요.
+측정 결과와 첫 개선은 [README.md](early-measurements.md)에 있어요. 이 문서는 2026-11-26에 모은 자료예요.
 - [Wine 버그 트래커](https://bugs.winehq.org)에서 운영체제가 macOS인 열린 버그 전부(604건)
 - Mac Wine 프로젝트의 이슈: [Highball](https://github.com/gauthierpiarrette/highball/issues), [Gcenx macOS 빌드](https://github.com/Gcenx/macOS_Wine_builds/issues)
 - Wine 개발자 논의: [MR 11058](https://gitlab.winehq.org/wine/wine/-/merge_requests/11058), [MR 11257](https://gitlab.winehq.org/wine/wine/-/merge_requests/11257), [DXMT PR 166](https://github.com/3Shain/dxmt/pull/166)
@@ -119,7 +119,7 @@ miroe는 애플 실리콘 전용 ARM64 네이티브 Wine + FEX 엔진이에요(2
 - **M2. VideoToolbox로 해독한 프레임을 복사 없이 D3D11 텍스처로** · C · 지금은 GStreamer(소프트웨어) → CPU 메모리 → GPU 업로드예요. 구현된 곳을 찾지 못했어요 · 상 · 4
 
 #### WoW64: 32비트
-- **W1. 32비트 게임의 DEP와 Metal placed 메모리** ([DXMT #161](https://github.com/3Shain/dxmt/issues/161)) · **C → Rosetta 경로에서 해결 (연구 성과로 보존, [RESEARCH.md](RESEARCH.md) W1). ARM64 네이티브에서는 생기지 않을 것으로 보고 확인 대기** · `NX_COMPAT`가 없는 32비트 D3D10/11 게임 전부(옛 Unity, 비주얼 노벨, GOG 고전). DXMT와 DXVK 모두, Rosetta와 FEX 모두 · 중 · **1 (선정)**
+- **W1. 32비트 게임의 DEP와 Metal placed 메모리** ([DXMT #161](https://github.com/3Shain/dxmt/issues/161)) · **C → Rosetta 경로에서 해결 (연구 성과로 보존, [research-log.md](research-log.md) W1). ARM64 네이티브에서는 생기지 않을 것으로 보고 확인 대기** · `NX_COMPAT`가 없는 32비트 D3D10/11 게임 전부(옛 Unity, 비주얼 노벨, GOG 고전). DXMT와 DXVK 모두, Rosetta와 FEX 모두 · 중 · **1 (선정)**
   - 원인(알려짐): DEP가 꺼진 프로세스에서 Wine은 `force_exec_prot`로 모든 읽기 가능한 페이지에 `PROT_EXEC`를 붙여요. Tahoe의 Metal은 실행 가능한 placed 메모리를 몹시 싫어하고, Rosetta에서는 쓰기+실행 페이지를 처음 만질 때마다 Mach 왕복이 생겨요([athei/wine-build#3](https://github.com/athei/wine-build/issues/3): 190배). 따로, placed 버퍼가 가상 메모리 한 영역에 있지 않아서 프레임 캡처가 죽어요
   - 소스: DXMT `src/dxmt/dxmt_buffer.cpp`(`CpuPlaced` → `wsi::aligned_malloc`), Wine `dlls/ntdll/unix/virtual.c`(`force_exec_prot`), `loader.c`(NX 판단)
   - 우회책(B): exe 표시 바꾸기, Highball 0013(DEP를 항상 켬, 프로세스 전체에 영향)
