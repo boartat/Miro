@@ -1,0 +1,132 @@
+From 311b18dd64d1167fe333619a4e6ee9c32f92884a Mon Sep 17 00:00:00 2001
+From: miroe <260228444+boartat@users.noreply.github.com>
+Date: Fri, 27 Nov 2026 12:25:49 +0900
+Subject: [PATCH] ntdll: Make pages executable lazily when DEP is off (miroe
+ W1).
+
+With data execution prevention off (a 32-bit program without
+IMAGE_DLLCHARACTERISTICS_NX_COMPAT, or SetProcessDEPPolicy), Wine forced
+PROT_EXEC on every readable mapping. Under Rosetta, writable and executable
+memory under a Metal no-copy buffer stalls the next CPU access for about
+1.2 s, once per buffer and whatever its size, and DXMT and DXVK make such
+buffers over placed memory for 32-bit programs all the time (DXMT #161):
+the GPU runs at full rate while the program presents a few frames a second.
+
+Instead, leave the host protection as Windows asked and answer the first
+execute fault on a readable page by adding PROT_EXEC to that page. Rosetta
+may report the instruction fetch as a read fault, so on macOS a fault
+within 16 bytes of the instruction pointer counts too, unless the host page
+is already executable. Turning DEP back on takes PROT_EXEC away again from
+pages that only had it lazily. On by default on macOS; WINE_LAZY_EXEC=0
+restores the old behaviour.
+
+Measured on macOS 27.2, M4 Pro, Wine 11.21 Staging x86_64 under Rosetta,
+DXMT v0.80, Engine/tests/c/d3d11-game-test.c built for i386 (20 s, 3 runs):
+without NX_COMPAT 35 frames (1.25 s stalls) before, 1997 after; with
+NX_COMPAT 2062 before, 1990 after. Engine/tests/c/dep-off-exec-test.c
+(code run from VirtualAlloc, heap, malloc, .data and stack memory, code
+rewritten after it ran, an instruction across a page boundary, after
+VirtualProtect) passes all nine cases as before. A 64-bit DXMT test is
+unchanged (3.345 vs 3.341 ms/frame).
+
+Source: miroe (Miro project). License: LGPL-2.1-or-later, like Wine.
+Written with AI assistance; not submitted upstream.
+---
+ dlls/ntdll/unix/virtual.c | 67 +++++++++++++++++++++++++++++++++++++++
+ 1 file changed, 67 insertions(+)
+
+diff --git a/dlls/ntdll/unix/virtual.c b/dlls/ntdll/unix/virtual.c
+index a19016e..a58773f 100644
+--- a/dlls/ntdll/unix/virtual.c
++++ b/dlls/ntdll/unix/virtual.c
+@@ -236,6 +236,44 @@ static int uffd_fd, pagemap_fd;
+ static struct file_view *view_block_start, *view_block_end, *next_free_view;
+ static const size_t view_block_size = 0x100000;
+ static BOOL force_exec_prot;  /* whether to force PROT_EXEC on all PROT_READ mmaps */
++/* miroe W1: with data execution prevention off, give a readable page PROT_EXEC on its first execute fault instead of
++ * forcing PROT_EXEC on every readable mapping up front (WINE_LAZY_EXEC=0 restores the old behaviour). Under Rosetta,
++ * writable and executable memory under a Metal no-copy buffer stalls the CPU for about a second (DXMT #161). */
++static BOOL lazy_exec_active;  /* DEP is off and handled lazily */
++static int lazy_exec_mode = -1;
++
++static BOOL use_lazy_exec(void)
++{
++    if (lazy_exec_mode == -1)
++    {
++        const char *env = getenv( "WINE_LAZY_EXEC" );
++#ifdef __APPLE__
++        lazy_exec_mode = env ? atoi( env ) != 0 : 1;
++#else
++        lazy_exec_mode = env ? atoi( env ) != 0 : 0;
++#endif
++    }
++    return lazy_exec_mode;
++}
++
++/* whether the host page is already executable, so that a fault on it is not one lazy exec can answer */
++static BOOL host_page_is_exec( const void *page )
++{
++#ifdef __APPLE__
++    mach_vm_address_t address = (mach_vm_address_t)page;
++    mach_vm_size_t size = 0;
++    vm_region_basic_info_data_64_t info;
++    mach_msg_type_number_t count = VM_REGION_BASIC_INFO_COUNT_64;
++    mach_port_t object;
++
++    if (mach_vm_region( mach_task_self(), &address, &size, VM_REGION_BASIC_INFO_64, (vm_region_info_t)&info,
++                        &count, &object )) return TRUE;
++    if (address > (mach_vm_address_t)page) return TRUE;  /* not mapped */
++    return (info.protection & VM_PROT_EXECUTE) != 0;
++#else
++    return FALSE;
++#endif
++}
+ static BOOL enable_write_exceptions;  /* raise exception on writes to executable memory */
+ 
+ static UINT_PTR *mem_areas;
+@@ -4280,6 +4318,25 @@ NTSTATUS virtual_handle_fault( struct thread_data *data, EXCEPTION_RECORD *rec,
+     mutex_lock( &virtual_mutex );  /* no need for signal masking inside signal handler */
+     vprot = get_host_page_vprot( page );
+ 
++    /* miroe W1: an instruction fetch from a readable page while DEP is off: make the page executable and retry.
++     * Rosetta may report the fetch as a read fault, so a fault at the instruction pointer counts too. */
++    if (lazy_exec_active && !(vprot & VPROT_GUARD) && (get_unix_prot( vprot ) & PROT_READ) &&
++        (err == EXCEPTION_EXECUTE_FAULT
++#ifdef __APPLE__
++         || ((char *)addr >= (char *)rec->ExceptionAddress && (char *)addr < (char *)rec->ExceptionAddress + 16)
++#endif
++        ) && !host_page_is_exec( page ))
++    {
++        TRACE( "lazy exec for %p-%p (fault at %p, ip %p)\n", page, page + host_page_size - 1, addr,
++               rec->ExceptionAddress );
++        if (!mprotect( page, host_page_size, get_unix_prot( vprot ) | PROT_EXEC ))
++        {
++            mutex_unlock( &virtual_mutex );
++            rec->ExceptionCode = STATUS_SUCCESS;
++            return STATUS_SUCCESS;
++        }
++    }
++
+ #ifdef __APPLE__
+     /* Rosetta on Apple Silicon misreports certain write faults as read faults. */
+     if (err == EXCEPTION_READ_FAULT && (get_unix_prot( vprot ) & PROT_READ))
+@@ -4668,6 +4725,16 @@ void virtual_set_force_exec( BOOL enable )
+     sigset_t sigset;
+ 
+     server_enter_uninterrupted_section( &virtual_mutex, &sigset );
++    if (use_lazy_exec())
++    {
++        /* miroe W1: nothing changes now; pages become executable on their first execute fault. Turning DEP back
++         * on takes PROT_EXEC away again from pages that only had it lazily. */
++        if (lazy_exec_active && !enable)
++            WINE_RB_FOR_EACH_ENTRY( view, &views_tree, struct file_view, entry )
++                mprotect_range( view->base, view->size, is_view_valloc( view ) ? 0 : VPROT_COMMITTED, 0 );
++        lazy_exec_active = enable;
++        enable = FALSE;
++    }
+     if (!force_exec_prot != !enable)  /* change all existing views */
+     {
+         force_exec_prot = enable;
+-- 
+2.54.0 (Apple Git-157)
+

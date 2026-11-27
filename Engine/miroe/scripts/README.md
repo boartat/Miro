@@ -11,6 +11,7 @@ These build the miroe research engine in `/Users/Shared/miroe-lab` (a short path
 | `build-dxmt-variant.sh <name> <source>` | Clones the dev engine and builds a DXMT source tree into it, for A/B tests |
 | `run.sh <log> <program>` | Runs a Windows program on the engine with every window kept off screen |
 | `game-matrix.sh`, `game-report.py`, `game-repeats.py` | The game-like test (`Engine/tests/c/d3d11-game-test.c`) on each DXMT variant, with memory sampling and per-phase frame times |
+| `w1-matrix.sh`, `w1-report.py`, `w1-depexec.sh` | W1 on the Intel lab engine (Rosetta): the 32-bit game-like test with and without `NX_COMPAT` on stock and lazy-exec Wine, and each case of `Engine/tests/c/dep-off-exec-test.c` with a time limit |
 | `v2-matrix.sh`, `v2-report.py` | MUMA v2 checks: regressions against v1, the game-like test, and a simulated 800 MB budget (`MIROE_MUMA_BUDGET_MB`) |
 
 Needs: Xcode with its Metal Toolchain, Homebrew `cmake ninja meson pkg-config bison freetype`.
