@@ -90,6 +90,46 @@ enum ProcessTree {
         return result
     }
 
+    /// A running Windows program by its exe file name ("game.exe"), as Wine shows it: Wine rewrites each process's
+    /// arguments to the Windows command line ("C:\\…\\game.exe …"). Returns the first match.
+    static func findWindowsProcess(named exeName: String) -> pid_t? {
+        let wanted = exeName.lowercased()
+        var mib: [Int32] = [CTL_KERN, KERN_PROC, KERN_PROC_ALL]
+        var size = 0
+        guard sysctl(&mib, 3, nil, &size, nil, 0) == 0, size > 0 else { return nil }
+        var processes = [kinfo_proc](repeating: kinfo_proc(), count: size / MemoryLayout<kinfo_proc>.stride + 32)
+        size = processes.count * MemoryLayout<kinfo_proc>.stride
+        guard sysctl(&mib, 3, &processes, &size, nil, 0) == 0 else { return nil }
+        let uid = getuid()
+        for process in processes.prefix(size / MemoryLayout<kinfo_proc>.stride) where process.kp_eproc.e_ucred.cr_uid == uid {
+            let pid = process.kp_proc.p_pid
+            guard pid > 1, let first = firstArgument(pid) else { continue }
+            // the path may hold spaces and may be quoted, and Wine may put the whole command line in argv[0]
+            let line = first.lowercased()
+            for separator in ["\\", "/"] {
+                let needle = separator + wanted
+                if line.hasSuffix(needle) || line.contains(needle + " ") || line.contains(needle + "\"") { return pid }
+            }
+        }
+        return nil
+    }
+
+    /// argv[0] of a process (KERN_PROCARGS2: argc, exec path, padding, then the arguments)
+    private static func firstArgument(_ pid: pid_t) -> String? {
+        var mib: [Int32] = [CTL_KERN, KERN_PROCARGS2, pid]
+        var size = 0
+        guard sysctl(&mib, 3, nil, &size, nil, 0) == 0, size > MemoryLayout<Int32>.size else { return nil }
+        var buffer = [UInt8](repeating: 0, count: size)
+        guard sysctl(&mib, 3, &buffer, &size, nil, 0) == 0 else { return nil }
+        var index = MemoryLayout<Int32>.size
+        while index < size, buffer[index] != 0 { index += 1 }   // exec path
+        while index < size, buffer[index] == 0 { index += 1 }   // padding
+        let start = index
+        while index < size, buffer[index] != 0 { index += 1 }
+        guard index > start else { return nil }
+        return String(decoding: buffer[start..<index], as: UTF8.self)
+    }
+
     /// Moves a process tree into (or out of) Darwin background — E-cores only, like `taskpolicy -b/-B -p`.
     /// Children spawned later inherit the state.
     @discardableResult
@@ -116,5 +156,31 @@ enum RetinaSetting {
         let end = text.range(of: "\n[", range: section.upperBound..<text.endIndex)?.lowerBound ?? text.endIndex
         guard let key = text.range(of: "\"RetinaMode\"=\"", range: section.upperBound..<end) else { return nil }
         return text[key.upperBound...].first == "y"
+    }
+
+    /// The Mac Driver's LeftCommandIsCtrl and LeftOptionIsAlt (nil when never set)
+    static func keyboard(in bottle: URL) -> (commandIsCtrl: Bool, optionIsAlt: Bool)? {
+        guard let data = try? Data(contentsOf: bottle.appending(path: "user.reg")) else { return nil }
+        let text = String(decoding: data, as: UTF8.self)
+        guard let section = text.range(of: "[Software\\\\Wine\\\\Mac Driver]") else { return nil }
+        let end = text.range(of: "\n[", range: section.upperBound..<text.endIndex)?.lowerBound ?? text.endIndex
+        func flag(_ name: String) -> Bool? {
+            guard let key = text.range(of: "\"\(name)\"=\"", range: section.upperBound..<end) else { return nil }
+            return text[key.upperBound...].first == "y"
+        }
+        guard let command = flag("LeftCommandIsCtrl"), let option = flag("LeftOptionIsAlt") else { return nil }
+        return (command, option)
+    }
+
+    /// HKCU\Control Panel\Desktop\LogPixels (nil or 0 = Wine's default, 96)
+    static func dpi(in bottle: URL) -> Int {
+        guard let data = try? Data(contentsOf: bottle.appending(path: "user.reg")) else { return 96 }
+        let text = String(decoding: data, as: UTF8.self)
+        guard let section = text.range(of: "[Control Panel\\\\Desktop]") else { return 96 }
+        let end = text.range(of: "\n[", range: section.upperBound..<text.endIndex)?.lowerBound ?? text.endIndex
+        guard let key = text.range(of: "\"LogPixels\"=dword:", range: section.upperBound..<end) else { return 96 }
+        let hex = text[key.upperBound...].prefix(8)
+        let value = Int(hex, radix: 16) ?? 0
+        return value == 0 ? 96 : value
     }
 }

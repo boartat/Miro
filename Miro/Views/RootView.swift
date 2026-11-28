@@ -11,6 +11,8 @@ struct RootView: View {
     @EnvironmentObject private var runtime: RuntimeManager
     @EnvironmentObject private var launcher: GameLauncher
     @EnvironmentObject private var secret: SecretBox
+    @EnvironmentObject private var steam: SteamAccount
+    @AppStorage(OnboardingView.completedKey) private var onboardingCompleted = false
     @State private var isDropTargeted = false
     @State private var setupPostponed = false
 
@@ -40,6 +42,10 @@ struct RootView: View {
             }
             .animation(.easeOut(duration: 0.15), value: isDropTargeted)
             .animation(.spring(duration: 0.3), value: library.toast)
+            .sheet(isPresented: onboardingBinding) {
+                OnboardingView { onboardingCompleted = true }
+                    .interactiveDismissDisabled()
+            }
             .sheet(isPresented: setupBinding) {
                 SetupView(postpone: { setupPostponed = true })
                     .environmentObject(runtime)
@@ -103,9 +109,17 @@ struct RootView: View {
         )
     }
 
+    private var onboardingBinding: Binding<Bool> {
+        Binding(get: { !onboardingCompleted }, set: { if !$0 { onboardingCompleted = true } })
+    }
+
+
+    /// The engine setup waits until the first-run guide is closed
     private var setupBinding: Binding<Bool> {
         Binding(
-            get: { (!runtime.isReady || runtime.isRunningSetup) && !setupPostponed },
+            // the first-run setup installs the classic runtime; with the miroe engine ready it is not needed
+            get: { !EngineManager.shared.isReady(.miroe) && (!runtime.isReady || runtime.isRunningSetup)
+                   && !setupPostponed && onboardingCompleted },
             set: { if !$0 { setupPostponed = true } }
         )
     }

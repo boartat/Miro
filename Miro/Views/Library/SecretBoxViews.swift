@@ -37,6 +37,69 @@ struct SecretBoxButton: View {
     }
 }
 
+/// The hide area at the bottom of the sidebar: drop a game here to hide it; click to open the secret box
+struct HideDropZone: View {
+    @EnvironmentObject private var secret: SecretBox
+    @EnvironmentObject private var library: GameLibrary
+    @State private var targeted = false
+    @State private var hovering = false
+    @State private var swallowed = 0
+
+    var body: some View {
+        Button {
+            if secret.isUnlocked {
+                secret.lock()
+            } else {
+                secret.request = secret.hasPassword ? .unlock : .create(hideAfter: nil)
+            }
+        } label: {
+            HStack(spacing: 10) {
+                Image(systemName: targeted ? "eye.slash.fill" : "eye.slash")
+                    .font(.system(size: 16, weight: .medium))
+                    .foregroundStyle(targeted ? Theme.accent : Theme.secondaryText)
+                    .frame(width: 26, height: 26)
+                    .scaleEffect(targeted ? 1.2 : 1)
+                    .symbolEffect(.bounce, value: swallowed)
+                VStack(alignment: .leading, spacing: 1) {
+                    Text(targeted ? "놓으면 숨겨요" : "숨기기")
+                        .font(.system(size: 12.5, weight: .semibold))
+                    Text("여기로 끌어다 놓아 숨기기")
+                        .font(.system(size: 11))
+                        .foregroundStyle(Theme.secondaryText)
+                }
+                Spacer(minLength: 0)
+            }
+            .padding(.horizontal, 10)
+            .padding(.vertical, 8)
+            .background(
+                RoundedRectangle(cornerRadius: 12, style: .continuous)
+                    .fill(targeted ? Theme.accent.opacity(0.12) : hovering ? Theme.fill : .clear)
+            )
+            .overlay(
+                RoundedRectangle(cornerRadius: 12, style: .continuous)
+                    .strokeBorder(targeted ? Theme.accent : Theme.separator,
+                                  style: StrokeStyle(lineWidth: targeted ? 1.5 : 1, dash: secret.isUnlocked ? [] : [4, 3]))
+            )
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .dropDestination(for: GameDragItem.self) { items, _ in
+            guard !secret.isUnlocked, !items.isEmpty else { return false }
+            if secret.hasPassword {
+                for item in items { library.setHidden(item.gameID, true) }
+            } else {
+                secret.request = .create(hideAfter: items[0].gameID)
+            }
+            swallowed += 1
+            return true
+        } isTargeted: { targeted = $0 && !secret.isUnlocked }
+        .onHover { hovering = $0 }
+        .animation(.spring(duration: 0.3, bounce: 0.35), value: targeted)
+        .animation(.easeOut(duration: 0.12), value: hovering)
+        .help("게임을 끌어다 놓으면 숨겨요 · 클릭하면 숨긴 게임(시크릿 박스) 보기")
+    }
+}
+
 /// A little box with a lock badge
 struct SecretBoxIcon: View {
     var open = false
@@ -78,9 +141,11 @@ struct SecretPasswordSheet: View {
 
     var body: some View {
         VStack(spacing: 16) {
-            SecretBoxIcon(open: false)
+            Image(systemName: "eye.slash.fill")
+                .font(.system(size: 24, weight: .semibold))
+                .foregroundStyle(.white)
                 .frame(width: 54, height: 54)
-                .scaleEffect(1.0)
+                .background(Circle().fill(Color.black.opacity(0.8)))
                 .padding(.top, 6)
             VStack(spacing: 5) {
                 Text(title)

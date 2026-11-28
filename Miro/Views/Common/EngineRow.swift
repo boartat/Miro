@@ -77,7 +77,7 @@ struct EngineRow: View {
         } else if kind == .miroe {
             switch engines.miroeState {
             case .installed:
-                status("준비됨 · 64비트 전용", ok: true)
+                status(MiroeEngine.runs32Bit ? "준비됨" : "준비됨 · 64비트 전용", ok: true)
             case .installing:
                 ProgressView().controlSize(.small)
             case .notInstalled, .failed:

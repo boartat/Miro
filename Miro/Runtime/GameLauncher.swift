@@ -58,10 +58,12 @@ final class GameLauncher: ObservableObject {
     /// Restore point from before an automatic install for a game, offered if the game still fails
     private var installRestorePoint: [UUID: RestorePoint] = [:]
     @Published var failure: LaunchFailure?
+    /// Steam games started through Steam: the game's own process, found after Steam starts it
+    @Published private(set) var steamRunning: [UUID: pid_t] = [:]
 
     private init() {}
 
-    func isRunning(_ id: UUID) -> Bool { running[id] != nil }
+    func isRunning(_ id: UUID) -> Bool { running[id] != nil || steamRunning[id] != nil }
 
     /// The player pressed 플레이: start with the first plan
     func launch(_ game: Game) {
@@ -70,34 +72,23 @@ final class GameLauncher: ObservableObject {
     }
 
     private func launch(_ game: Game, plan wanted: LaunchPlan?) {
-        guard running[game.id] == nil, !preparing.contains(game.id) else { return }
+        guard running[game.id] == nil, steamRunning[game.id] == nil, !preparing.contains(game.id) else { return }
+        // A Steam game starts the way Steam starts it (its launch options, working folder, environment, DRM),
+        // in the prefix where the Steam client lives; the play button looks the same
+        if let appID = game.steamAppID, SteamClient.shared.isInstalled {
+            launchThroughSteam(game, appID: appID)
+            return
+        }
         let engines = EngineManager.shared
-        if game.winePreference == .miroe, wanted == nil, !engines.isReady(.miroe) {
+        guard let plan = wanted ?? LaunchPlanner.plans(for: game).first,
+              let bottle = engines.bottle(for: plan.engine) else {
             failure = LaunchFailure(
-                gameID: game.id, gameName: game.name, title: "miroe 실험 엔진이 준비되지 않았어요",
+                gameID: game.id, gameName: game.name, title: "miroe 엔진이 준비되지 않았어요",
                 exitCode: nil, missing: [], dependencyIDs: [],
                 hints: [MiroeEngine.isInstalled
                         ? "설정 → 호환 레이어에서 miroe의 'Windows 환경 준비'를 눌러 주세요."
-                        : "miroe 엔진 파일이 없어요. 아직 내려받을 수 없는 실험 엔진이라 Scripts/install_miroe_engine.sh로 넣어요.",
-                        "게임 설정에서 엔진을 '자동'으로 바꾸면 기존 엔진으로 실행해요."],
+                        : "miroe 엔진 파일이 없어요. Scripts/install_miroe_engine.sh로 넣어 주세요."],
                 logURL: nil, engine: .miroe)
-            return
-        }
-        guard let plan = wanted ?? LaunchPlanner.plans(for: game).first,
-              let bottle = engines.bottle(for: plan.engine) else {
-            let needsModern = game.winePreference == .modern || game.wineLearned == .modern
-                || !engines.isReady(.classic)
-            failure = needsModern && !engines.isReady(.modern)
-                ? LaunchFailure(
-                    gameID: game.id, gameName: game.name, title: "최신 엔진이 필요해요",
-                    exitCode: nil, missing: [], dependencyIDs: [],
-                    hints: ["이 게임은 최신 엔진(Wine \(ModernEngine.wineVersion))이 필요해요. "
-                            + "아래에서 설치하면 바로 실행돼요 (\(ModernEngine.downloadSize))."],
-                    logURL: nil, engine: .modern, suggestedEngine: .modern)
-                : LaunchFailure(
-                    gameID: game.id, gameName: game.name, title: "Windows 호환 레이어가 아직 준비되지 않았어요",
-                    exitCode: nil, missing: [], dependencyIDs: [],
-                    hints: ["처음 설정을 완료하면 게임을 실행할 수 있어요."], logURL: nil)
             return
         }
         guard game.exists else {
@@ -110,11 +101,11 @@ final class GameLauncher: ObservableObject {
             return
         }
 
-        if plan.engine == .miroe, game.architecture == PEInfo.Arch.x86.rawValue {
+        if plan.engine == .miroe, game.architecture == PEInfo.Arch.x86.rawValue, !MiroeEngine.runs32Bit {
             failure = LaunchFailure(
-                gameID: game.id, gameName: game.name, title: "miroe 실험 엔진은 아직 32비트 게임을 못 돌려요",
+                gameID: game.id, gameName: game.name, title: "설치된 miroe 엔진은 32비트 게임을 못 돌려요",
                 exitCode: nil, missing: [], dependencyIDs: [],
-                hints: ["이 게임은 32비트예요. 지금 miroe는 Apple의 서명 권한 없이 도는 64비트 전용 판이에요.",
+                hints: ["이 게임은 32비트예요. 지금 들어 있는 miroe는 예전의 64비트 전용 판이에요. Scripts/install_miroe_engine.sh로 서명된 새 판을 넣어 주세요.",
                         "게임 설정에서 엔진을 '자동'으로 바꾸면 기존 엔진으로 실행해요."],
                 logURL: nil, engine: .miroe)
             return
@@ -123,10 +114,29 @@ final class GameLauncher: ObservableObject {
         if !(tried[game.id] ?? []).contains(plan) { tried[game.id, default: []].append(plan) }
         preparing.insert(game.id)
         Task {
+            if plan.engine == .miroe {
+                // miroe: Retina at 200 % for the prefix (Steam shares it), this game's DPI flag, the Mac Driver keys
+                await EngineManager.shared.updateMiroePrefixIfNeeded()
+                await MiroeMigration.prepareDisplay(games: GameLibrary.shared.games, commandAsCtrl: game.commandAsCtrl)
+                await CJKFonts.applyIfNeeded(engine: engine, bottle: bottle)
+                preparing.remove(game.id)
+                start(game, plan: plan, engine: engine, bottle: bottle)
+                return
+            }
             // Retina is a prefix-wide registry value: switch it to this game's choice before starting
             if RetinaSetting.current(in: engine.bottleURL) != game.retina {
                 await engine.setRetina(game.retina, bottle: bottle)
             }
+            // display scale is prefix-wide too: this game's choice (only meaningful with Retina)
+            let dpi = game.retina ? max(96, 96 * game.uiScale / 100) : 96
+            if RetinaSetting.dpi(in: engine.bottleURL) != dpi {
+                await engine.setDisplayDPI(dpi, bottle: bottle)
+            }
+            let keys = RetinaSetting.keyboard(in: engine.bottleURL)
+            if keys?.commandIsCtrl != game.commandAsCtrl || keys?.optionIsAlt != true {
+                await engine.setKeyboard(commandAsCtrl: game.commandAsCtrl, bottle: bottle)
+            }
+            await CJKFonts.applyIfNeeded(engine: engine, bottle: bottle)
             if plan.graphics == .dxvk {
                 try? await Task.detached(priority: .userInitiated) {
                     try EngineManager.installDXVK(into: engine.bottleURL)
@@ -151,6 +161,11 @@ final class GameLauncher: ObservableObject {
         let path = game.executableURL.path(percentEncoded: false)
         // FPS / GPU time overlay (Metal HUD) per game — overrides the prefix-wide setting
         environment["MTL_HUD_ENABLED"] = game.showFPS ? "1" : "0"
+        if let appID = game.steamAppID {
+            // tells the game's Steam API which app it is, so it does not restart itself through Steam
+            environment["SteamAppId"] = String(appID)
+            environment["SteamGameId"] = String(appID)
+        }
 
         // Engine launch arguments for 전체 화면 (노치까지) / 꽉 채우기; the user's own arguments come last and win
         let native = FullscreenMode.nativeSize(retina: game.retina)
@@ -284,8 +299,70 @@ final class GameLauncher: ObservableObject {
 
     func stop(_ game: Game) {
         stoppedByUser.insert(game.id)
+        if let pid = steamRunning[game.id] {
+            kill(pid, SIGTERM)
+            return
+        }
         running[game.id]?.terminate()
         WineEngine.of(runningEngine[game.id] ?? EngineManager.shared.engine(for: game)).killAll()
+    }
+
+    // MARK: Steam games
+
+    /// `steam.exe -applaunch <appid>`, then follows the game's own process for 실행 중, 중지 and play time
+    private func launchThroughSteam(_ game: Game, appID: Int) {
+        preparing.insert(game.id)
+        let gameID = game.id
+        let exeName = game.executableURL.lastPathComponent.lowercased()
+        Task {
+            let client = SteamClient.shared
+            let steamWasRunning = client.isRunning
+            // the game's DPI flag is read when the game starts; Steam must be up before it can start a game
+            await MiroeMigration.prepareDisplay(games: GameLibrary.shared.games)
+            guard await client.ensureRunning() else {
+                preparing.remove(gameID)
+                failure = LaunchFailure(
+                    gameID: gameID, gameName: game.name, title: "Steam이 켜지지 않았어요",
+                    exitCode: nil, missing: [], dependencyIDs: [],
+                    hints: ["Steam 게임은 Steam이 켜져 있어야 실행돼요. 'Steam 열기'로 Steam을 먼저 열고 로그인해 주세요."],
+                    logURL: nil, engine: .miroe)
+                return
+            }
+            client.start(["-applaunch", String(appID)])
+            // Steam may update the game or show a dialog first: wait up to 3 minutes (5 if Steam was just started)
+            let deadline = Date.now.addingTimeInterval(steamWasRunning ? 180 : 300)
+            var pid: pid_t?
+            while pid == nil, Date.now < deadline, !Task.isCancelled {
+                try? await Task.sleep(for: .seconds(2))
+                pid = await Task.detached { ProcessTree.findWindowsProcess(named: exeName) }.value
+            }
+            preparing.remove(gameID)
+            guard let pid else {
+                failure = LaunchFailure(
+                    gameID: gameID, gameName: game.name, title: "Steam이 게임을 시작하지 않았어요",
+                    exitCode: nil, missing: [], dependencyIDs: [],
+                    hints: ["Steam 창에 업데이트나 확인 창이 떠 있는지 봐 주세요. Steam 창에서 직접 실행해도 돼요.",
+                            "Steam에 로그인돼 있어야 게임을 시작할 수 있어요."],
+                    logURL: nil, engine: .miroe)
+                return
+            }
+            let start = Date.now
+            steamRunning[gameID] = pid
+            startedAt[gameID] = start
+            GameLibrary.shared.update(gameID) { entry in
+                entry.launchCount += 1
+                entry.lastPlayedAt = start
+            }
+            while kill(pid, 0) == 0 { try? await Task.sleep(for: .seconds(2)) }
+            steamRunning[gameID] = nil
+            startedAt[gameID] = nil
+            stoppedByUser.remove(gameID)
+            GameLibrary.shared.update(gameID) { entry in
+                entry.playSeconds += Date.now.timeIntervalSince(start)
+                entry.lastRunSucceeded = true
+                entry.lastExitCode = nil
+            }
+        }
     }
 
     private func finished(

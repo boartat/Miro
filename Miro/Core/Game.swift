@@ -127,6 +127,17 @@ struct Game: Codable, Identifiable, Hashable, Sendable {
     var graphicsPreference: GraphicsPreference = .auto
     /// The graphics layer the last successful run on the modern engine used (자동 starts there next time)
     var graphicsLearned: GraphicsBackend?
+    /// Set for games installed through Miro's Steam: they run in the Steam client's prefix with Steam running
+    var steamAppID: Int?
+    /// Windows display scale in percent while Retina is on (LogPixels = 96 × scale): 100 keeps the old size,
+    /// 200 draws a DPI-aware program at normal size with Retina sharpness
+    var uiScale: Int = 100
+    /// ⌘ acts as Ctrl (Mac-style ⌘C / ⌘V in ordinary programs); off sends Windows keys as they are, for games
+    var commandAsCtrl: Bool = false
+    /// The game sees the Mac's real pixels and DPI (sharp, but a DPI-aware game may draw its UI at another size).
+    /// Off: Windows tells the game it is not DPI-aware, so it sees a 96-DPI screen of the Mac's size in points and
+    /// Wine scales it up, as before Steam's window needed 200 % in the same prefix (miroe: AppCompatFlags\Layers)
+    var nativeResolution: Bool = false
 
     init(name: String, executablePath: String) {
         self.name = name
@@ -164,6 +175,10 @@ struct Game: Codable, Identifiable, Hashable, Sendable {
         wineLearned = try? container.decodeIfPresent(WineEngineKind.self, forKey: .wineLearned)
         graphicsPreference = (try? container.decodeIfPresent(GraphicsPreference.self, forKey: .graphicsPreference)) ?? .auto
         graphicsLearned = try? container.decodeIfPresent(GraphicsBackend.self, forKey: .graphicsLearned)
+        steamAppID = try? container.decodeIfPresent(Int.self, forKey: .steamAppID)
+        uiScale = (try? container.decodeIfPresent(Int.self, forKey: .uiScale)) ?? 100
+        commandAsCtrl = (try? container.decodeIfPresent(Bool.self, forKey: .commandAsCtrl)) ?? false
+        nativeResolution = (try? container.decodeIfPresent(Bool.self, forKey: .nativeResolution)) ?? false
     }
 
     var executableURL: URL { URL(fileURLWithPath: executablePath) }

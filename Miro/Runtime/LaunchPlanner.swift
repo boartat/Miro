@@ -5,15 +5,9 @@
 //  Decides, per game, which engine and graphics layer to try and in what order. The launcher starts the
 //  first plan and moves to the next one by itself when a run fails, so the player only sees the game start.
 //
-//  Order for 자동:
-//    1. what worked for this game last time
-//    2. the graphics layer the compatibility database verified for it
-//    3. the most efficient layers for the Direct3D version the game uses (measured on Apple silicon:
-//       DXMT ≥ D3DMetal > DXVK for Direct3D 10/11; D3DMetal for 12; Wine's own for 9)
-//    4. the classic engine (Wine 7.7 + D3DMetal) as the last resort
-//
-//  The miroe engine (experimental) runs a game only when it is chosen for that game, with Mullion, and nothing
-//  else is tried after it: a failure there should show, not be hidden by another engine.
+//  Since 2026-11-28 every game runs on the miroe engine (ARM64 Wine + FEX) with automatic graphics: Mullion for
+//  Direct3D 10/11/12, WineD3D for Direct3D 1-9. The order below (order(for:)) is kept for the earlier engines'
+//  history; LaunchPlanner no longer offers them.
 //
 
 import Foundation
@@ -33,40 +27,11 @@ struct LaunchPlan: Hashable, Sendable {
 
 @MainActor
 enum LaunchPlanner {
+    /// Every game runs on miroe. Its graphics are picked by the engine itself for the Direct3D version the game
+    /// uses (Mullion for 10-12, WineD3D for 1-9), so there is one plan and nothing to fall back to.
+    /// The earlier engines (classic, modern) stay installed for their prefixes' data but are not offered.
     static func plans(for game: Game) -> [LaunchPlan] {
-        let engines = EngineManager.shared
-        var plans: [LaunchPlan] = []
-        func add(_ plan: LaunchPlan) {
-            switch plan.engine {
-            case .modern:
-                guard let graphics = plan.graphics, graphics != .mullion, engines.offers(graphics) else { return }
-            case .classic:
-                guard engines.isReady(.classic) else { return }
-            case .miroe:
-                guard engines.isReady(.miroe) else { return }
-            }
-            if !plans.contains(plan) { plans.append(plan) }
-        }
-
-        switch game.winePreference {
-        case .miroe:
-            add(.miroe)
-        case .classic:
-            add(.classic)
-        case .modern, .auto:
-            if let chosen = game.graphicsPreference.backend {
-                add(.modern(chosen))
-            } else {
-                if let learned = game.graphicsLearned, game.wineLearned == .modern || game.wineLearned == nil {
-                    add(.modern(learned))
-                }
-                if game.wineLearned == .classic, game.winePreference == .auto { add(.classic) }
-                if let verified = CompatibilityDatabase.entry(for: game)?.graphics { add(.modern(verified)) }
-                for graphics in order(for: api(of: game)) { add(.modern(graphics)) }
-            }
-            if game.winePreference == .auto { add(.classic) }
-        }
-        return plans
+        EngineManager.shared.isReady(.miroe) ? [.miroe] : []
     }
 
     /// Reading every DLL next to a game takes a moment, so the answer is kept per executable

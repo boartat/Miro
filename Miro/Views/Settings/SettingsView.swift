@@ -24,7 +24,6 @@ struct SettingsView: View {
 
 private struct GeneralSettings: View {
     @AppStorage("autoArtworkLookup") private var autoArtwork = true
-    @AppStorage("killOnTerminate") private var killOnTerminate = false
 
     var body: some View {
         Form {
@@ -41,7 +40,9 @@ private struct GeneralSettings: View {
                 }
             }
             Section("앱") {
-                Toggle("Miro를 종료하면 실행 중인 Windows 프로그램도 종료", isOn: $killOnTerminate)
+                Text("Miro를 종료하면 Steam과 실행 중인 Windows 프로그램도 함께 종료돼요.")
+                    .font(.system(size: 12))
+                    .foregroundStyle(Theme.secondaryText)
                 LabeledContent("로그") {
                     Button("로그 폴더 열기") {
                         MiroPaths.ensure(MiroPaths.logs)
@@ -80,13 +81,14 @@ private struct RuntimeSettings: View {
     var body: some View {
         Form {
             Section("상태") {
+                let miroeReady = EngineManager.shared.isReady(.miroe)
                 LabeledContent("호환 레이어") {
-                    Label(runtime.isReady ? "준비됨" : "설치 필요",
-                          systemImage: runtime.isReady ? "checkmark.circle.fill" : "exclamationmark.circle.fill")
-                        .foregroundStyle(runtime.isReady ? Theme.success : Theme.warning)
+                    Label(miroeReady ? "준비됨" : "준비 필요",
+                          systemImage: miroeReady ? "checkmark.circle.fill" : "exclamationmark.circle.fill")
+                        .foregroundStyle(miroeReady ? Theme.success : Theme.warning)
                 }
-                LabeledContent("기본 엔진", value: runtime.runtimeDescription)
-                LabeledContent("Rosetta 2", value: Rosetta2.isRosettaInstalled ? "설치됨" : "없음")
+                LabeledContent("엔진", value: "miroe · ARM64 Wine + FEX (Rosetta 없음)")
+                LabeledContent("그래픽", value: "자동 · DirectX 10~12 Mullion, 1~9 WineD3D")
                 LabeledContent("가상 C: 드라이브") {
                     Text(MiroPaths.driveC.abbreviatedPath)
                         .font(.system(size: 11, design: .monospaced))
@@ -95,17 +97,13 @@ private struct RuntimeSettings: View {
             }
 
             Section {
-                EngineRow(kind: .classic)
-                EngineRow(kind: .modern)
-                if MiroeEngine.isInstalled {
-                    EngineRow(kind: .miroe)
-                }
+                EngineRow(kind: .miroe)
             } header: {
                 Text("엔진")
             } footer: {
-                Text("기본은 자동이에요. 최신 엔진에서 게임이 쓰는 DirectX 버전에 맞는 그래픽 방식부터 실행하고, 안 되면 다음 방식, "
-                     + "그다음 클래식 엔진으로 넘어가요. 게임마다 '게임 설정'에서 엔진과 그래픽을 직접 고를 수도 있어요. "
-                     + "두 엔진은 C: 드라이브를 따로 써서 서로 영향을 주지 않아요.")
+                Text("모든 게임과 Steam은 miroe 엔진에서 돌아요. 그래픽은 게임이 쓰는 DirectX 버전에 맞춰 자동으로 골라요. "
+                     + "예전 엔진(클래식, 최신)의 C: 드라이브는 세이브와 설치된 파일을 위해 그대로 남겨 두었어요. "
+                     + "세이브와 설정은 miroe로 복제했고, Steam은 예전 Steam 폴더를 그대로 써요.")
                     .font(.system(size: 11))
                     .foregroundStyle(Theme.secondaryText)
             }

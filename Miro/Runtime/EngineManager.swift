@@ -88,9 +88,9 @@ enum ModernEngine {
     }
 }
 
-/// The miroe experimental engine: ARM64 Wine + FEX + Mullion with miroe's patches, built in the miroe lab and put in
-/// place by `Scripts/install_miroe_engine.sh` (it is not downloadable yet: without Apple's cross-architecture
-/// entitlement it runs only 64-bit programs, and a signed build would run only on the developer's registered Macs).
+/// The miroe experimental engine: upstream ARM64 Wine + FEX + Mullion with miroe's patches, built in the miroe lab
+/// and put in place by `Scripts/install_miroe_engine.sh`. It is not downloadable yet: its loader is signed with a
+/// development provisioning profile (Apple's cross-architecture entitlement), which runs only on registered Macs.
 enum MiroeEngine {
     /// Short on purpose, like `ModernEngine.root`
     static let root = MiroPaths.engines.appending(path: "miroe")
@@ -101,6 +101,25 @@ enum MiroeEngine {
     static var isInstalled: Bool {
         root.appending(path: "bin/wine").fileExists && marker.fileExists
             && root.appending(path: "lib/wine/aarch64-windows/d3d12.dll").fileExists
+    }
+
+    /// The signed engine runs 32-bit games: FEX for i386 (xtajit.dll) and Mullion's 32-bit DLLs are there.
+    /// The earlier unsigned build had neither and ran only 64-bit programs.
+    static var runs32Bit: Bool {
+        root.appending(path: "lib/wine/aarch64-windows/xtajit.dll").fileExists
+            && root.appending(path: "lib/wine/i386-windows/d3d11.dll").fileExists
+    }
+
+    /// Whether a prefix has its 32-bit side. A prefix made before FEX was in the engine has an empty syswow64, and
+    /// Wine fills a missing system file from its own DLLs only while it bootstraps a prefix.
+    static func has32BitSide(_ bottle: URL) -> Bool {
+        bottle.appending(path: "drive_c/windows/syswow64/kernel32.dll").fileExists
+            && bottle.appending(path: "drive_c/windows/system32/xtajit.dll").fileExists
+    }
+
+    /// Ready to run games in `bottle`: a prefix, and its 32-bit side when the engine has one
+    static func prefixIsComplete(_ bottle: URL) -> Bool {
+        bottle.appending(path: "system.reg").fileExists && (!runs32Bit || has32BitSide(bottle))
     }
 }
 
@@ -143,7 +162,7 @@ final class EngineManager: ObservableObject {
             modernBottle = Bottle(bottleUrl: MiroPaths.modernBottle, isAvailable: true)
         }
         if miroeState != .installing {
-            let miroeReady = MiroeEngine.isInstalled && WineEngine.miroe.hasPrefix
+            let miroeReady = MiroeEngine.isInstalled && MiroeEngine.prefixIsComplete(MiroPaths.miroeBottle)
             miroeState = miroeReady ? .installed : .notInstalled
             miroeBottle = miroeReady ? (miroeBottle ?? Bottle(bottleUrl: MiroPaths.miroeBottle, isAvailable: true)) : nil
         }
@@ -185,7 +204,7 @@ final class EngineManager: ObservableObject {
 
     /// The engine `game` runs with first (see LaunchPlanner for the whole order)
     func engine(for game: Game) -> WineEngineKind {
-        LaunchPlanner.plans(for: game).first?.engine ?? .classic
+        LaunchPlanner.plans(for: game).first?.engine ?? .miroe
     }
 
     // MARK: - miroe (experimental)
@@ -201,11 +220,29 @@ final class EngineManager: ObservableObject {
             var env = ProcessRunner.baseEnvironment
             env.merge(engine.environment(for: bottle)) { $1 }
             env["WINEDLLOVERRIDES"] = "mscoree,mshtml=;winemac.drv=d;winemenubuilder.exe=d"
-            try await Self.runGuarded(engine: engine, arguments: ["wineboot", "-i"], environment: env, timeout: 300)
-            guard engine.hasPrefix else {
+            if !engine.hasPrefix {
+                try await Self.runGuarded(engine: engine, arguments: ["wineboot", "-i"], environment: env, timeout: 300)
+            }
+            if engine.hasPrefix, MiroeEngine.runs32Bit, !MiroeEngine.has32BitSide(MiroPaths.miroeBottle) {
+                // a prefix from the earlier 64-bit-only engine: give it FEX, then let wineboot fill syswow64 the way
+                // it does for a new prefix (Wine uses its own DLLs for missing system files only in bootstrap mode)
+                detail = "miroe Windows 환경에 32비트 지원을 더하는 중…"
+                let system32 = MiroPaths.miroeBottle.appending(path: "drive_c/windows/system32")
+                for name in ["xtajit.dll", "xtajit64.dll"] {
+                    let target = system32.appending(path: name)
+                    try? FileManager.default.removeItem(at: target)
+                    try FileManager.default.copyItem(
+                        at: MiroeEngine.root.appending(path: "lib/wine/aarch64-windows/\(name)"), to: target)
+                }
+                env["WINEBOOTSTRAPMODE"] = "1"
+                try await Self.runGuarded(engine: engine, arguments: ["wineboot", "-u"], environment: env, timeout: 300)
+                env["WINEBOOTSTRAPMODE"] = nil
+            }
+            guard MiroeEngine.prefixIsComplete(MiroPaths.miroeBottle) else {
                 throw InstallError(message: "miroe의 Windows 환경을 만들지 못했어요. 로그를 확인해 주세요.")
             }
             _ = try? await engine.run(["winecfg", "-v", "win11"], bottle: bottle)
+            await CJKFonts.applyIfNeeded(engine: engine, bottle: bottle)
             // C:\Games is the classic prefix's game folder, as on the modern engine
             let games = MiroPaths.miroeBottle.appending(path: "drive_c/Games")
             if !games.fileExists, (try? FileManager.default.destinationOfSymbolicLink(atPath: games.path(percentEncoded: false))) == nil {
@@ -219,6 +256,24 @@ final class EngineManager: ObservableObject {
             miroeState = .failed(error.localizedDescription)
             detail = error.localizedDescription
         }
+    }
+
+    /// After new engine files, Wine updates the prefix on the next start and, with .NET missing, offers to download
+    /// Wine Mono in a window. Miro does that update itself first, quietly, without Mono or Gecko (as when it makes
+    /// the prefix). Wine keeps the time of the wine.inf it last updated from in .update-timestamp.
+    func updateMiroePrefixIfNeeded() async {
+        let stamp = MiroPaths.miroeBottle.appending(path: ".update-timestamp")
+        let inf = MiroeEngine.root.appending(path: "share/wine/wine.inf")
+        guard isReady(.miroe), let modified = (try? inf.resourceValues(forKeys: [.contentModificationDateKey]))?.contentModificationDate,
+              let text = try? String(contentsOf: stamp, encoding: .utf8) else { return }
+        let stored = Int(text.trimmingCharacters(in: .whitespacesAndNewlines).split(separator: " ").first ?? "") ?? 0
+        guard stored != Int(modified.timeIntervalSince1970), !text.hasPrefix("disable") else { return }
+        let engine = WineEngine.miroe
+        let bottle = Bottle(bottleUrl: MiroPaths.miroeBottle, isAvailable: true)
+        var env = ProcessRunner.baseEnvironment
+        env.merge(engine.environment(for: bottle)) { $1 }
+        env["WINEDLLOVERRIDES"] = "mscoree,mshtml=;winemenubuilder.exe=d"
+        try? await Self.runGuarded(engine: engine, arguments: ["wineboot", "-u"], environment: env, timeout: 300)
     }
 
     // MARK: - Install

@@ -18,6 +18,8 @@ struct MiroApp: App {
     @StateObject private var launcher = GameLauncher.shared
     @StateObject private var secret = SecretBox.shared
     @StateObject private var engines = EngineManager.shared
+    @StateObject private var steam = SteamAccount.shared
+    @StateObject private var steamClient = SteamClient.shared
 
     var body: some Scene {
         Window("Miro", id: "main") {
@@ -28,6 +30,8 @@ struct MiroApp: App {
                 .environmentObject(launcher)
                 .environmentObject(secret)
                 .environmentObject(engines)
+                .environmentObject(steam)
+                .environmentObject(steamClient)
                 .frame(minWidth: 980, minHeight: 640)
         }
         .defaultSize(width: 1320, height: 840)
@@ -52,6 +56,10 @@ struct MiroApp: App {
                 .keyboardShortcut("k", modifiers: [.command, .shift])
             }
             CommandGroup(replacing: .help) {
+                Button("Miro 시작하기 안내 다시 보기") {
+                    UserDefaults.standard.set(false, forKey: OnboardingView.completedKey)
+                }
+                Divider()
                 Link("Miro 소스 코드", destination: MiroLinks.repository)
                 Link("문제 신고하기", destination: MiroLinks.issues)
                 Link("문의하기 (\(MiroLinks.contactAddress))", destination: MiroLinks.contact)

@@ -10,12 +10,13 @@ import SwiftUI
 struct LibraryView: View {
     @EnvironmentObject private var library: GameLibrary
     @EnvironmentObject private var secret: SecretBox
+    @EnvironmentObject private var steam: SteamAccount
 
     var body: some View {
         GeometryReader { geometry in
             HStack(spacing: 0) {
                 SidebarView()
-                    .frame(width: max(200, geometry.size.width * 0.2))
+                    .frame(width: max(220, geometry.size.width * 0.2))
                 Rectangle()
                     .fill(Theme.separator)
                     .frame(width: 0.5)
@@ -25,6 +26,8 @@ struct LibraryView: View {
                             .id(game.id)
                     } else if secret.isUnlocked {
                         SecretBoxHomeView()
+                    } else if steam.pageOpen {
+                        SteamPageView()
                     } else {
                         HomeView()
                     }
@@ -32,8 +35,57 @@ struct LibraryView: View {
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
                 .background(Theme.window)
             }
+            // Inside the secret box everything turns grey, so it is clear where you are
+            .saturation(secret.isUnlocked ? 0 : 1)
+            .overlay(alignment: .top) {
+                if secret.isUnlocked {
+                    SecretBoxExitBar()
+                        .padding(.top, 12)
+                        .transition(.move(edge: .top).combined(with: .opacity))
+                }
+            }
+            .animation(.easeInOut(duration: 0.35), value: secret.isUnlocked)
         }
         .ignoresSafeArea()
+    }
+}
+
+/// Always on top while the secret box is open: where you are, and the way out (also Esc)
+struct SecretBoxExitBar: View {
+    @EnvironmentObject private var secret: SecretBox
+    @EnvironmentObject private var library: GameLibrary
+
+    var body: some View {
+        HStack(spacing: 12) {
+            Image(systemName: "eye.slash.fill")
+                .font(.system(size: 14, weight: .semibold))
+            VStack(alignment: .leading, spacing: 1) {
+                Text("시크릿 박스 안이에요")
+                    .font(.system(size: 13, weight: .bold))
+                Text("숨긴 게임 \(library.sorted(filter: "", hidden: true).count)개")
+                    .font(.system(size: 11))
+                    .opacity(0.75)
+            }
+            Button {
+                secret.lock()
+            } label: {
+                Label("나가기", systemImage: "arrow.uturn.backward")
+                    .font(.system(size: 13, weight: .semibold))
+                    .padding(.horizontal, 14)
+                    .padding(.vertical, 7)
+                    .background(Capsule().fill(.white))
+                    .foregroundStyle(.black)
+            }
+            .buttonStyle(.plain)
+            .keyboardShortcut(.cancelAction)
+            .help("시크릿 박스에서 나가기 (Esc)")
+        }
+        .foregroundStyle(.white)
+        .padding(.leading, 18)
+        .padding(.trailing, 8)
+        .padding(.vertical, 8)
+        .background(Capsule().fill(Color.black.opacity(0.82)))
+        .shadow(color: .black.opacity(0.3), radius: 14, y: 6)
     }
 }
 
@@ -43,6 +95,8 @@ struct SidebarView: View {
     @EnvironmentObject private var library: GameLibrary
     @EnvironmentObject private var launcher: GameLauncher
     @EnvironmentObject private var secret: SecretBox
+    @EnvironmentObject private var steam: SteamAccount
+    @EnvironmentObject private var steamClient: SteamClient
     @State private var filter = ""
     @State private var dropTarget: String?
     @State private var folderPrompt: FolderPrompt?
@@ -108,18 +162,27 @@ struct SidebarView: View {
     private var header: some View {
         HStack(alignment: .center) {
             if secret.isUnlocked {
-                Label("시크릿 박스", systemImage: "lock.open.fill")
-                    .font(.system(size: 18, weight: .bold))
+                Label("시크릿 박스", systemImage: "eye.slash.fill")
+                    .font(.system(size: 17, weight: .bold))
                     .labelStyle(.titleAndIcon)
             } else {
-                Text("라이브러리")
-                    .font(.system(size: 20, weight: .bold))
+                HStack(spacing: 8) {
+                    Image(nsImage: NSApp.applicationIconImage)
+                        .resizable()
+                        .frame(width: 26, height: 26)
+                    Text("Miro")
+                        .font(.system(size: 21, weight: .bold))
+                        .tracking(-0.3)
+                }
             }
             Spacer()
             if secret.isUnlocked {
+                Button("나가기") { secret.lock() }
+                    .buttonStyle(.borderedProminent)
+                    .controlSize(.small)
+                    .help("시크릿 박스에서 나가기")
                 Menu {
                     Button("비밀번호 변경…") { secret.request = .change }
-                    Button("잠그기") { secret.lock() }
                 } label: {
                     Image(systemName: "ellipsis.circle").font(.system(size: 15))
                 }
@@ -169,13 +232,13 @@ struct SidebarView: View {
     @ViewBuilder
     private var normalList: some View {
         SidebarItemRow(
-            isSelected: library.selectedID == nil && !library.selectionMode,
+            isSelected: library.selectedID == nil && !library.selectionMode && !steam.pageOpen,
             isDropTarget: dropTarget == "home",
-            action: { library.selectedID = nil }
+            action: { library.selectedID = nil; steam.pageOpen = false }
         ) {
             Image(systemName: "house.fill")
                 .font(.system(size: 14))
-                .foregroundStyle(library.selectedID == nil ? Color.white : Theme.accent)
+                .foregroundStyle(library.selectedID == nil && !steam.pageOpen ? Color.white : Theme.accent)
                 .frame(width: 30, height: 30)
             Text("홈")
                 .font(.system(size: 13, weight: .semibold))
@@ -190,7 +253,7 @@ struct SidebarView: View {
         let ungrouped = library.ungroupedGames(filter: filter)
         let total = library.sorted(filter: filter).count
 
-        Text(filter.isEmpty ? "게임 · \(total)" : "검색 결과 · \(total)")
+        Text(filter.isEmpty ? "라이브러리 · \(total)" : "검색 결과 · \(total)")
             .font(.system(size: 11, weight: .semibold))
             .foregroundStyle(Theme.secondaryText)
             .padding(.horizontal, 8)
@@ -221,6 +284,18 @@ struct SidebarView: View {
         }
         ForEach(library.imports) { job in
             ImportRow(job: job).padding(.horizontal, 6)
+        }
+
+        // Steam is always here: open it (or install it), and the library preview once the Steam app is signed in
+        Text("Steam")
+            .font(.system(size: 11, weight: .semibold))
+            .foregroundStyle(Theme.secondaryText)
+            .padding(.horizontal, 8)
+            .padding(.top, 12)
+            .padding(.bottom, 4)
+        SteamOpenRow()
+        if steam.isLoggedIn {
+            SteamSidebarSection(filter: filter)
         }
     }
 
@@ -308,6 +383,9 @@ struct SidebarView: View {
                 Group {
                     if launcher.isRunning(game.id) {
                         Text("실행 중").foregroundStyle(Theme.play)
+                    } else if let appID = game.steamAppID, let status = steamClient.apps[appID], status.phase != .installed {
+                        Text(status.phase.label + (status.progress.map { " · \(Int($0 * 100))%" } ?? ""))
+                            .foregroundStyle(Theme.accent)
                     } else if !game.exists {
                         Text("파일 없음").foregroundStyle(Theme.warning)
                     } else {
@@ -372,17 +450,29 @@ struct SidebarView: View {
                 .padding(.bottom, 12)
             } else {
                 InstallProgressFooter()
-                HStack(spacing: 8) {
-                    SecretBoxButton()
-                    Spacer()
-                    SettingsLink {
-                        Image(systemName: "gearshape")
-                            .font(.system(size: 13))
+                VStack(spacing: 8) {
+                    if !secret.isUnlocked { HideDropZone() }
+                    HStack(spacing: 2) {
+                        SteamSidebarRow()
+                        Button {
+                            UserDefaults.standard.set(false, forKey: OnboardingView.completedKey)
+                        } label: {
+                            Image(systemName: "questionmark.circle")
+                                .font(.system(size: 15))
+                                .frame(width: 28, height: 28)
+                        }
+                        .buttonStyle(.borderless)
+                        .help("도움말 · Miro 시작하기 안내 다시 보기")
+                        SettingsLink {
+                            Image(systemName: "gearshape")
+                                .font(.system(size: 15))
+                                .frame(width: 28, height: 28)
+                        }
+                        .buttonStyle(.borderless)
+                        .help("설정 · 라이브러리 관리")
                     }
-                    .buttonStyle(.borderless)
-                    .help("설정 · 라이브러리 관리")
                 }
-                .padding(.horizontal, 14)
+                .padding(.horizontal, 10)
                 .padding(.bottom, 12)
             }
         }

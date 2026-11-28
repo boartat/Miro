@@ -31,6 +31,10 @@ final class SecretBox: ObservableObject {
 
     private init() {
         hasPassword = Self.load() != nil
+        #if DEBUG
+        // screenshots of the secret-box look without a password (debug builds only)
+        if ProcessInfo.processInfo.environment["MIRO_DEBUG_SECRET_OPEN"] != nil { isUnlocked = true }
+        #endif
     }
 
     /// First run: choose a password

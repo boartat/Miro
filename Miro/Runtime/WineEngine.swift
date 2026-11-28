@@ -139,7 +139,7 @@ struct WineEngine: Sendable {
         switch kind {
         case .classic: return "클래식 · Wine 7.7 + D3DMetal"
         case .modern: return "최신 · Wine \(ModernEngine.wineVersion)"
-        case .miroe: return "miroe (실험) · ARM64 + Mullion"
+        case .miroe: return "miroe · ARM64 Wine + FEX"
         }
     }
 
@@ -165,9 +165,9 @@ struct WineEngine: Sendable {
             return "CrossOver 26.3 오픈소스 기반 Wine 11. DXMT·D3DMetal·DXVK·Wine 기본 그래픽을 게임마다 바꿔 끼우고, "
                 + "안 되면 다음 방식으로 알아서 넘어가요. 최신 Windows 기능이 필요한 게임(예: Unity 6.3)도 실행돼요."
         case .miroe:
-            return "실험 중인 차세대 엔진이에요. Rosetta 없이 ARM64로 돌고(게임의 Intel 코드는 FEX가 번역), "
-                + "DirectX 10/11/12를 Mullion으로 그려요(D3DMetal 없음). 지금은 64비트 프로그램만 돼요. "
-                + "자동으로는 고르지 않고, 다른 엔진으로 넘어가지도 않아요."
+            return "Rosetta 없이 ARM64로 돌고(게임의 Intel 코드는 FEX가 번역), DirectX 10/11/12는 Mullion, "
+                + "DirectX 1~9는 WineD3D로 자동으로 그려요(D3DMetal 없음). 32비트 게임도 돼요(DirectX 12는 64비트만). "
+                + "Steam도 이 엔진에서 돌아요."
         }
     }
 
@@ -263,6 +263,24 @@ struct WineEngine: Sendable {
              "/d", enabled ? "y" : "n", "/f"],
             bottle: bottle
         )
+    }
+
+    /// Mac Driver key options (prefix-wide): ⌘ as Ctrl, and Option always as Alt (Windows programs and games
+    /// expect Alt; macOS's Option characters are not useful there)
+    func setKeyboard(commandAsCtrl: Bool, bottle: Bottle) async {
+        let key = #"HKCU\Software\Wine\Mac Driver"#
+        let values = [("LeftCommandIsCtrl", commandAsCtrl), ("RightCommandIsCtrl", commandAsCtrl),
+                      ("LeftOptionIsAlt", true), ("RightOptionIsAlt", true)]
+        for (name, on) in values {
+            _ = try? await run(["reg", "add", key, "/v", name, "/t", "REG_SZ", "/d", on ? "y" : "n", "/f"], bottle: bottle)
+        }
+    }
+
+    /// Windows DPI of the prefix (prefix-wide, read when a program starts): 96 = 100 %, 192 = 200 %
+    func setDisplayDPI(_ dpi: Int, bottle: Bottle) async {
+        for key in [#"HKCU\Control Panel\Desktop"#, #"HKLM\System\CurrentControlSet\Hardware Profiles\Current\Software\Fonts"#] {
+            _ = try? await run(["reg", "add", key, "/v", "LogPixels", "/t", "REG_DWORD", "/d", String(dpi), "/f"], bottle: bottle)
+        }
     }
 
     /// Number of running processes whose executable lives inside this engine (wine loaders, wineserver …)

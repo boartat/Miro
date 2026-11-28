@@ -111,17 +111,30 @@ enum ProcessRunner {
     }
 }
 
-/// Serialises writes to a log file from the pipe and termination handlers.
+/// Serialises writes to a log file from the pipe and termination handlers. A log stops growing at `limit`
+/// (a game that prints without end once filled 40 GB); the exit line is still written.
 private final class LockedHandle: @unchecked Sendable {
+    static let limit = 64 * 1024 * 1024
     private let handle: FileHandle
     private let lock = NSLock()
     private var closed = false
+    private var written = 0
+    private var full = false
 
     init(_ handle: FileHandle) { self.handle = handle }
 
     func write(_ data: Data) {
         lock.lock(); defer { lock.unlock() }
         guard !closed else { return }
+        if full {
+            // only the closing "[exit code …]" line gets through
+            guard data.count < 64, String(decoding: data, as: UTF8.self).contains("[exit code") else { return }
+        } else if written + data.count > Self.limit {
+            full = true
+            try? handle.write(contentsOf: Data("\n[Miro: 로그가 64MB를 넘어 이후 출력은 저장하지 않았어요]\n".utf8))
+            return
+        }
+        written += data.count
         try? handle.write(contentsOf: data)
     }
 

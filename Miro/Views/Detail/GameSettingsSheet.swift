@@ -14,10 +14,7 @@ struct GameSettingsSheet: View {
     @State private var name = ""
     @State private var arguments = ""
     @State private var locale: Locales = .auto
-    @State private var winePreference: WinePreference = .auto
-    @State private var graphicsPreference: GraphicsPreference = .auto
     @State private var executable = ""
-    @EnvironmentObject private var engines: EngineManager
     @State private var candidates: [String] = []
 
     var body: some View {
@@ -48,26 +45,43 @@ struct GameSettingsSheet: View {
                 }
 
                 Section {
-                    Picker("엔진", selection: $winePreference) {
-                        // the experimental engine is offered only on a Mac where it is installed
-                        ForEach(WinePreference.allCases.filter { $0 != .miroe || MiroeEngine.isInstalled || winePreference == .miroe }) { preference in
-                            Text(preference.title).tag(preference)
-                        }
-                    }
-                    if winePreference != .classic && winePreference != .miroe {
-                        Picker("그래픽 (최신 엔진)", selection: $graphicsPreference) {
-                            ForEach(GraphicsPreference.allCases) { preference in
-                                Text(preference.title).tag(preference)
-                            }
-                        }
+                    LabeledContent("엔진", value: "miroe")
+                    LabeledContent("그래픽", value: "자동 · \(graphicsSummary)")
+                    if game.steamAppID != nil {
+                        Label("Steam 게임이라 Steam이 직접 실행해요. 실행 옵션은 Steam의 게임 속성에서 바꿔요.", systemImage: "gamecontroller")
+                            .font(.system(size: 12))
+                            .foregroundStyle(Theme.secondaryText)
                     }
                 } header: {
                     Text("호환 엔진")
                 } footer: {
-                    Text(engineFooter)
+                    Text("모든 게임은 miroe 엔진에서 돌고, 그래픽은 게임이 쓰는 DirectX 버전에 맞춰 자동으로 골라요."
+                         + (game.architecture == PEInfo.Arch.x86.rawValue && !MiroeEngine.runs32Bit
+                            ? " 지금 들어 있는 miroe는 64비트 전용이라 이 32비트 게임은 실행되지 않아요." : ""))
                         .font(.system(size: 11))
                         .foregroundStyle(Theme.secondaryText)
                         .fixedSize(horizontal: false, vertical: true)
+                }
+
+                Section {
+                    Toggle("Mac 원래 해상도로 실행 (Retina)", isOn: Binding(
+                        get: { library.game(game.id)?.nativeResolution ?? false },
+                        set: { value in library.update(game.id) { $0.nativeResolution = value } }
+                    ))
+                    if game.steamAppID == nil {
+                        Toggle("⌘ 키를 Ctrl처럼 쓰기 (⌘C, ⌘V …)", isOn: Binding(
+                            get: { library.game(game.id)?.commandAsCtrl ?? false },
+                            set: { value in library.update(game.id) { $0.commandAsCtrl = value } }
+                        ))
+                    }
+                } header: {
+                    Text("화면 · 키보드")
+                } footer: {
+                    Text("기본은 꺼져 있어요: 게임이 예전처럼 Mac 화면 크기에 맞춰 보이고 Wine이 키워서 그려요. 켜면 게임이 Mac의 실제 픽셀로 "
+                         + "더 선명하게 그리지만, 게임에 따라 글자나 UI 크기가 달라질 수 있어요. 다음 실행부터 적용돼요. "
+                         + "⌘를 Ctrl로 쓰면 일반 프로그램에서 Mac처럼 복사·붙여넣기를 할 수 있어요. Option은 항상 Alt로 동작해요.")
+                        .font(.system(size: 11))
+                        .foregroundStyle(Theme.secondaryText)
                 }
 
                 Section("커버 이미지") {
@@ -124,8 +138,6 @@ struct GameSettingsSheet: View {
             name = game.name
             arguments = game.arguments
             locale = Locales(rawValue: game.locale) ?? .auto
-            winePreference = game.winePreference
-            graphicsPreference = game.graphicsPreference
             executable = relativeExecutable
             let root = game.rootFolderURL
             Task.detached(priority: .userInitiated) {
@@ -139,40 +151,13 @@ struct GameSettingsSheet: View {
         }
     }
 
-    private var engineFooter: String {
-        switch winePreference {
-        case .auto:
-            let current = LaunchPlanner.plans(for: game).first?.title ?? "엔진 설치 필요"
-            return "지금은 \(current)로 시작해요. 실행이 안 되면 Miro가 다른 그래픽 방식이나 엔진으로 "
-                + "알아서 바꿔 다시 실행하고, 잘 된 방식을 기억해요." + graphicsFooter
-        case .classic:
-            return WineEngine.classic.summary
-        case .modern:
-            return WineEngine.modern.summary
-                + (engines.isReady(.modern) ? "" : " 아직 설치되지 않았어요. 실행하면 설치 안내가 나와요.")
-                + graphicsFooter
-        case .miroe:
-            return WineEngine.miroe.summary
-                + (game.architecture == PEInfo.Arch.x86.rawValue ? " 이 게임은 32비트라서 miroe로는 실행되지 않아요." : "")
-                + (engines.isReady(.miroe) ? "" : " 설정 → 호환 레이어에서 Windows 환경을 먼저 준비해 주세요.")
-        }
-    }
-
-    /// What the graphics choice means on this Mac right now
-    private var graphicsFooter: String {
-        switch graphicsPreference {
-        case .auto:
-            return " 그래픽(최신 엔진): 게임이 쓰는 DirectX 버전에 맞춰 효율이 좋은 순서로 고르고, 안 되면 다음 방식으로 넘어가요."
-        case .dxmt:
-            return " 그래픽: DXMT로 DirectX 10/11을 Metal에 바로 그려요. 가장 가볍고 빨라요."
-        case .d3dmetal:
-            return engines.d3dmetalAccepted
-                ? " 그래픽: Apple D3DMetal로 그려요. DirectX 12 게임에 써요."
-                : " 그래픽: D3DMetal은 설정 → 호환 레이어에서 Apple 라이선스에 동의해야 쓸 수 있어요."
-        case .dxvk:
-            return " 그래픽: DXVK(Vulkan 경유)로 그려요. 다른 방식에서 화면이 깨지는 게임에 써요."
-        case .wined3d:
-            return " 그래픽: Wine 기본 그래픽으로 그려요. DirectX 9 게임에 잘 맞아요."
+    /// What the engine draws this game with, from the DirectX version it uses
+    private var graphicsSummary: String {
+        switch LaunchPlanner.api(of: game) {
+        case .direct3D12, .direct3D11: return "Mullion (DirectX 10~12)"
+        case .direct3D9: return "WineD3D (DirectX 9 이하)"
+        case .openGL: return "OpenGL"
+        case .unknown: return "Mullion · WineD3D"
         }
     }
 
@@ -190,12 +175,8 @@ struct GameSettingsSheet: View {
             if !trimmed.isEmpty { entry.name = trimmed }
             entry.arguments = arguments.trimmingCharacters(in: .whitespacesAndNewlines)
             entry.locale = locale.rawValue
-            entry.graphicsPreference = graphicsPreference
-            if entry.winePreference != winePreference {
-                entry.winePreference = winePreference
-                // A manual choice starts 자동 over from what it learns next
-                if winePreference == .auto { entry.wineLearned = nil }
-            }
+            entry.winePreference = .miroe
+            entry.graphicsPreference = .auto
         }
         if !executable.isEmpty && executable != relativeExecutable {
             library.setExecutable(game.id, relativePath: executable)

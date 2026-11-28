@@ -2,7 +2,7 @@
 //  HomeView.swift
 //  Miro
 //
-//  "홈": recently played shelf, one section per folder, then every other game as cards.
+//  "홈": the miroe banner, every game and program, then the recently run ones.
 //
 
 import SwiftUI
@@ -12,77 +12,204 @@ struct HomeView: View {
 
     var body: some View {
         let games = library.sorted(filter: "")
-        if games.isEmpty && library.imports.isEmpty {
-            EmptyLibraryView()
-        } else {
-            ScrollView {
-                VStack(alignment: .leading, spacing: 32) {
-                    HStack(alignment: .lastTextBaseline) {
-                        VStack(alignment: .leading, spacing: 4) {
-                            Text("홈")
-                                .font(.system(size: 34, weight: .bold))
-                            Text(summary(games))
-                                .font(.system(size: 13))
-                                .foregroundStyle(Theme.secondaryText)
-                        }
-                        Spacer()
-                        Button {
-                            AddGamePanel.present()
-                        } label: {
-                            Label("게임 추가", systemImage: "plus")
-                        }
-                        .buttonStyle(.bordered)
+        ScrollView {
+            VStack(alignment: .leading, spacing: 34) {
+                MeetMiroeBanner()
+
+                if games.isEmpty && library.imports.isEmpty {
+                    EmptyLibraryView()
+                        .frame(minHeight: 360)
+                } else {
+                    HomeSection(title: "전체 게임 · 프로그램", symbol: "square.grid.2x2.fill", count: games.count) {
+                        HomeGrid(games: games)
                     }
 
                     let recent = games
                         .filter { $0.lastPlayedAt != nil }
                         .sorted { ($0.lastPlayedAt ?? .distantPast) > ($1.lastPlayedAt ?? .distantPast) }
-                        .prefix(8)
+                        .prefix(6)
                     if !recent.isEmpty {
-                        HomeSection(title: "최근 플레이", symbol: "clock.fill") {
-                            ScrollView(.horizontal) {
-                                LazyHStack(spacing: 18) {
-                                    ForEach(Array(recent)) { game in
-                                        HomeCard(game: game, width: 340)
-                                    }
+                        HomeSection(title: "최근 실행", symbol: "clock.fill") {
+                            VStack(spacing: 0) {
+                                ForEach(Array(recent.enumerated()), id: \.element.id) { index, game in
+                                    if index > 0 { Divider().padding(.leading, 152) }
+                                    RecentRow(game: game)
                                 }
-                                .padding(.vertical, 6)
-                                .padding(.horizontal, 2)
                             }
-                            .scrollIndicators(.never)
-                        }
-                    }
-
-                    ForEach(library.sortedFolders) { folder in
-                        let folderGames = library.games(in: folder, filter: "")
-                        if !folderGames.isEmpty {
-                            HomeSection(title: folder.name, symbol: "folder.fill", count: folderGames.count) {
-                                HomeGrid(games: folderGames)
-                            }
-                        }
-                    }
-
-                    let ungrouped = library.ungroupedGames(filter: "")
-                    if !ungrouped.isEmpty {
-                        HomeSection(title: library.folders.isEmpty ? "모든 게임" : "그 밖의 게임",
-                                    symbol: "square.grid.2x2.fill", count: ungrouped.count) {
-                            HomeGrid(games: ungrouped)
                         }
                     }
                 }
-                .padding(.horizontal, 32)
-                .padding(.top, 44)
-                .padding(.bottom, 36)
             }
+            .padding(.horizontal, 32)
+            .padding(.top, 40)
+            .padding(.bottom, 36)
+        }
+    }
+}
+
+/// The home banner: the name, a link to the project (miroe's updates and progress), and whether this Miro is current
+struct MeetMiroeBanner: View {
+    @StateObject private var updates = UpdateChecker.shared
+    @State private var hovering = false
+    @State private var appeared = false
+
+    var body: some View {
+        HStack(alignment: .center) {
+            Link(destination: MiroLinks.repository) {
+                VStack(alignment: .leading, spacing: 10) {
+                    Text("Meet miroe.")
+                        .font(.system(size: 44, weight: .bold))
+                        .tracking(-0.8)
+                        .foregroundStyle(.white)
+                    HStack(spacing: 6) {
+                        Text("GitHub 바로가기")
+                        Image(systemName: "arrow.up.right")
+                            .font(.system(size: 13, weight: .bold))
+                            .offset(x: hovering ? 2 : 0, y: hovering ? -2 : 0)
+                    }
+                    .font(.system(size: 17, weight: .semibold))
+                    .foregroundStyle(.white.opacity(hovering ? 0.95 : 0.72))
+                }
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .onHover { hovering = $0 }
+            .help("Miro와 miroe의 최신 업데이트와 개발 현황 (GitHub)")
+            Spacer(minLength: 16)
+            versionBadge
+        }
+        .padding(.horizontal, 40)
+        .frame(maxWidth: .infinity, minHeight: 150, alignment: .leading)
+        .background(MiroeBannerBackground())
+        .clipShape(RoundedRectangle(cornerRadius: 20, style: .continuous))
+        .overlay(
+            RoundedRectangle(cornerRadius: 20, style: .continuous)
+                .strokeBorder(.white.opacity(0.08), lineWidth: 1)
+        )
+        .shadow(color: .black.opacity(hovering ? 0.28 : 0.16), radius: hovering ? 18 : 10, y: hovering ? 8 : 4)
+        .opacity(appeared ? 1 : 0)
+        .offset(y: appeared ? 0 : 8)
+        .animation(.spring(duration: 0.35), value: hovering)
+        .animation(.easeInOut(duration: 0.25), value: updates.status)
+        .onAppear { withAnimation(.easeOut(duration: 0.5)) { appeared = true } }
+        .task { await updates.check() }
+    }
+
+    /// "v1.2.0 · 최신 버전" or a link to the newer release
+    @ViewBuilder
+    private var versionBadge: some View {
+        switch updates.status {
+        case .checking:
+            badge(icon: nil, text: "버전 확인 중…", tint: .white.opacity(0.7), spinning: true)
+        case .latest:
+            badge(icon: "checkmark.seal.fill", text: "v\(updates.currentVersion) · 최신 버전", tint: Color(nsColor: .systemGreen))
+        case .available(let version, let url):
+            Link(destination: url) {
+                badge(icon: "arrow.down.circle.fill", text: "새 버전 v\(version) 받기", tint: Color(nsColor: .systemBlue), filled: true)
+            }
+            .buttonStyle(.plain)
+            .help("지금 v\(updates.currentVersion) · GitHub에서 v\(version) 받기")
+        case .unknown:
+            Button { Task { await updates.check(force: true) } } label: {
+                badge(icon: "arrow.clockwise", text: "v\(updates.currentVersion) · 확인 실패, 다시", tint: .white.opacity(0.7))
+            }
+            .buttonStyle(.plain)
         }
     }
 
-    private func summary(_ games: [Game]) -> String {
-        var parts = ["게임 \(games.count)개"]
-        if !library.folders.isEmpty { parts.append("폴더 \(library.folders.count)개") }
-        let total = games.reduce(0) { $0 + $1.playSeconds }
-        if total >= 60 { parts.append("총 플레이 \(Game.formattedPlayTime(total))") }
-        return parts.joined(separator: " · ")
+    private func badge(icon: String?, text: String, tint: Color, spinning: Bool = false, filled: Bool = false) -> some View {
+        HStack(spacing: 6) {
+            if spinning { ProgressView().controlSize(.mini).tint(.white) }
+            if let icon { Image(systemName: icon).foregroundStyle(filled ? .white : tint) }
+            Text(text).foregroundStyle(.white)
+        }
+        .font(.system(size: 12.5, weight: .semibold))
+        .padding(.horizontal, 12)
+        .padding(.vertical, 7)
+        .background(Capsule().fill(filled ? AnyShapeStyle(tint.gradient) : AnyShapeStyle(.white.opacity(0.12))))
+        .overlay(Capsule().strokeBorder(.white.opacity(0.15), lineWidth: 0.5))
+    }
+}
+
+/// Deep blue-black with two slow light bands, drawn here (no image)
+struct MiroeBannerBackground: View {
+    var body: some View {
+        TimelineView(.animation(minimumInterval: 1 / 30)) { context in
+            let t = context.date.timeIntervalSinceReferenceDate
+            Canvas { canvas, size in
+                canvas.fill(Path(CGRect(origin: .zero, size: size)), with: .linearGradient(
+                    Gradient(colors: [Color(red: 0.07, green: 0.09, blue: 0.14), Color(red: 0.12, green: 0.15, blue: 0.24)]),
+                    startPoint: .zero, endPoint: CGPoint(x: size.width, y: size.height)))
+                for band in 0..<2 {
+                    let phase = t * (0.18 + Double(band) * 0.07) + Double(band) * 1.7
+                    var path = Path()
+                    let baseY = size.height * (0.95 - Double(band) * 0.18)
+                    path.move(to: CGPoint(x: size.width * 0.35, y: size.height + 20))
+                    for step in 0...40 {
+                        let x = size.width * (0.35 + 0.65 * Double(step) / 40)
+                        let progress = Double(step) / 40
+                        let y = baseY - progress * size.height * 0.9 + sin(progress * 3.2 + phase) * 14
+                        path.addLine(to: CGPoint(x: x, y: y))
+                    }
+                    canvas.stroke(path, with: .linearGradient(
+                        Gradient(colors: [.white.opacity(0), .white.opacity(band == 0 ? 0.16 : 0.10), .white.opacity(0)]),
+                        startPoint: CGPoint(x: size.width * 0.35, y: 0), endPoint: CGPoint(x: size.width, y: 0)),
+                        lineWidth: band == 0 ? 26 : 14)
+                }
+            }
+            .blur(radius: 10)
+        }
+    }
+}
+
+/// One line of "최근 실행": artwork, name, when, Play
+struct RecentRow: View {
+    let game: Game
+    @EnvironmentObject private var library: GameLibrary
+    @EnvironmentObject private var launcher: GameLauncher
+    @EnvironmentObject private var runtime: RuntimeManager
+    @State private var hovering = false
+
+    var body: some View {
+        let running = launcher.isRunning(game.id)
+        HStack(spacing: 16) {
+            Color.clear
+                .frame(width: 136, height: 76)
+                .overlay(CardArtwork(game: game))
+                .clipShape(RoundedRectangle(cornerRadius: 9, style: .continuous))
+                .overlay(RoundedRectangle(cornerRadius: 9, style: .continuous)
+                    .strokeBorder(Theme.separator.opacity(0.6), lineWidth: 0.5))
+            VStack(alignment: .leading, spacing: 3) {
+                Text(game.name)
+                    .font(.system(size: 15, weight: .semibold))
+                    .lineLimit(1)
+                Text(running ? "실행 중" : "\(Game.relativeDate(game.lastPlayedAt)) 실행함 · \(game.engine.shortName)")
+                    .font(.system(size: 12))
+                    .foregroundStyle(running ? Theme.play : Theme.secondaryText)
+                    .lineLimit(1)
+            }
+            Spacer()
+            Button {
+                if running { launcher.stop(game) } else { launcher.launch(game) }
+            } label: {
+                Image(systemName: running ? "stop.fill" : "play.fill")
+                    .font(.system(size: 13, weight: .bold))
+                    .foregroundStyle(running ? .white : .primary)
+                    .frame(width: 38, height: 38)
+                    .background(Circle().fill(running ? AnyShapeStyle(Theme.stop.gradient) : AnyShapeStyle(Theme.fill)))
+            }
+            .buttonStyle(.plain)
+            .disabled(!running && (!runtime.isReady || !game.exists))
+            .help(running ? "중지" : "플레이")
+        }
+        .padding(.vertical, 10)
+        .padding(.horizontal, 8)
+        .background(RoundedRectangle(cornerRadius: 12, style: .continuous).fill(hovering ? Theme.fill : .clear))
+        .contentShape(Rectangle())
+        .onTapGesture { library.selectedID = game.id }
+        .onHover { hovering = $0 }
+        .animation(.easeOut(duration: 0.12), value: hovering)
+        .contextMenu { GameContextMenu(game: game) }
     }
 }
 
@@ -96,8 +223,11 @@ struct SecretBoxHomeView: View {
         ScrollView {
             VStack(alignment: .leading, spacing: 28) {
                 HStack(spacing: 16) {
-                    SecretBoxIcon(open: true)
+                    Image(systemName: "eye.slash.fill")
+                        .font(.system(size: 26, weight: .semibold))
+                        .foregroundStyle(.white)
                         .frame(width: 56, height: 56)
+                        .background(RoundedRectangle(cornerRadius: 14, style: .continuous).fill(Color.black.opacity(0.75)))
                     VStack(alignment: .leading, spacing: 4) {
                         Text("시크릿 박스")
                             .font(.system(size: 30, weight: .bold))
@@ -106,22 +236,16 @@ struct SecretBoxHomeView: View {
                             .foregroundStyle(Theme.secondaryText)
                     }
                     Spacer()
-                    Button {
-                        secret.lock()
-                    } label: {
-                        Label("잠그기", systemImage: "lock.fill")
-                    }
-                    .buttonStyle(.borderedProminent)
                 }
                 if hidden.isEmpty {
-                    Text("숨긴 게임이 없어요. 게임을 우클릭해서 '숨기기'를 누르면 여기로 옮겨져요.")
+                    Text("숨긴 게임이 없어요. 게임을 사이드바 아래 '숨기기'로 끌어다 놓거나, 우클릭해서 '숨기기'를 누르면 여기로 와요.")
                         .foregroundStyle(Theme.secondaryText)
                 } else {
                     HomeGrid(games: hidden)
                 }
             }
             .padding(.horizontal, 32)
-            .padding(.top, 44)
+            .padding(.top, 84)
             .padding(.bottom, 36)
         }
     }

@@ -35,12 +35,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         Task.detached(priority: .background) {
             AppDelegate.deleteOldLogs()
         }
+        // miroe: link the earlier Steam folder and clone save data into the miroe prefix (once; nothing is moved)
+        Task { @MainActor in
+            if MiroeEngine.isInstalled && !EngineManager.shared.isReady(.miroe) { await EngineManager.shared.prepareMiroe() }
+            await MiroeMigration.run()
+            SteamClient.shared.sync()
+        }
     }
 
+    /// Quitting Miro ends Steam and every Windows program it started, on every engine, so nothing keeps running
+    /// without Miro
     func applicationWillTerminate(_ notification: Notification) {
-        if UserDefaults.standard.bool(forKey: "killOnTerminate") {
-            MainActor.assumeIsolated { AppDelegate.killWine() }
-        }
+        MainActor.assumeIsolated { AppDelegate.killWine() }
     }
 
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool {
@@ -52,11 +58,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         if let bottle = RuntimeManager.shared.bottle {
             try? Wine.killBottle(bottle: bottle)
         }
-        if EngineManager.shared.isReady(.modern) {
-            WineEngine.modern.killAll()
-        }
-        if EngineManager.shared.isReady(.miroe) {
-            WineEngine.miroe.killAll()
+        // wineserver -k of each engine whose files are there (Steam runs on miroe; older engines may still have
+        // something running from before)
+        for engine in [WineEngine.modern, WineEngine.miroe] where engine.wineserverBinary.fileExists && engine.hasPrefix {
+            engine.killAll()
         }
     }
 
