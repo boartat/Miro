@@ -29,6 +29,29 @@ Miro 1.1에는 Miro Metal Bridge, 곧 DXMT용으로 고친 Wine Mac 드라이버
 | `Engine/miroe/patches/experiments` | 비교용. DXMT #260 제보자가 글로 설명한 변경을 miroe가 구현한 것(코드 복사 없음), LGPL-2.1 이상 |
 | 나머지 (`Engine/miroe`의 문서·도구·스크립트, `Engine/tests`) | Miro와 같은 GPL-3.0 이상 |
 
+### miroe 엔진 배포 파일 (`miroe-engine-1.2.0.tar.xz`, 릴리즈 첨부)
+
+Miro 1.2가 첫 실행 때 받는 엔진이에요. 라이선스 전문은 엔진 안의 `miro/licenses`에 들어 있어요. 고친 부분의 소스는 같은 릴리즈에 첨부해요. 고치지 않은 라이브러리는 아래 버전의 공식 소스로 Homebrew가 빌드한 그대로예요.
+
+| 구성 요소 | 버전 | 라이선스 | 소스 |
+| --- | --- | --- | --- |
+| Wine | 11.22-280-gecca8e7552 + `Engine/miroe/patches/wine` 0001–0003 | LGPL-2.1 이상 | 릴리즈의 `wine-miroe-1.2.0-src.tar.xz` |
+| Mullion | 0f22b2c + `Engine/miroe/patches/mullion` 0001–0005 | LGPL-2.1 이상 | 릴리즈의 `mullion-miroe-1.2.0-src.tar.xz` |
+| FEX | 4f9c1f1e + Hadron의 macOS 패치 7개 | MIT | [FEX-Emu/FEX](https://github.com/FEX-Emu/FEX), [Hadron](https://github.com/Broyojo/hadron) |
+| MoltenVK | 1.4.2 | Apache-2.0 | [KhronosGroup/MoltenVK](https://github.com/KhronosGroup/MoltenVK) |
+| FreeType | 2.15.0 | FreeType License | [freetype.org](https://freetype.org) |
+| GnuTLS | 3.8.14 | LGPL-2.1 이상 | [gnutls.org](https://www.gnutls.org) |
+| Nettle | 4.0 | LGPL-3.0 이상 또는 GPL-2.0 이상 | [Nettle](https://www.lysator.liu.se/~nisse/nettle/) |
+| GMP | 6.3.0 | LGPL-3.0 이상 또는 GPL-2.0 이상 | [gmplib.org](https://gmplib.org) |
+| libidn2 | 2.3.8 | LGPL-3.0 이상 또는 GPL-2.0 이상 | [GNU libidn](https://www.gnu.org/software/libidn/) |
+| libunistring | 1.5 | LGPL-3.0 이상 또는 GPL-2.0 이상 | [GNU libunistring](https://www.gnu.org/software/libunistring/) |
+| libtasn1 | 4.21.0 | LGPL-2.1 이상 | [GNU libtasn1](https://www.gnu.org/software/libtasn1/) |
+| gettext (libintl) | 1.0 | LGPL-2.1 이상 | [GNU gettext](https://www.gnu.org/software/gettext/) |
+| p11-kit | 0.26.6 | BSD-3-Clause | [p11-glue/p11-kit](https://github.com/p11-glue/p11-kit) |
+| libpng | 1.6.59 | libpng License | [libpng.org](http://www.libpng.org/pub/png/libpng.html) |
+| Brotli | 1.2.1 | MIT | [google/brotli](https://github.com/google/brotli) |
+| Noto Sans CJK KR | `sources.conf`의 noto-cjk | SIL OFL 1.1 | [notofonts/noto-cjk](https://github.com/notofonts/noto-cjk) |
+
 `Engine/tests/c/sm6`의 셰이더는 Microsoft [DXC](https://github.com/microsoft/DirectXShaderCompiler)(LLVM 라이선스 + Microsoft 라이선스)로 컴파일해요. DXC와 컴파일된 셰이더는 저장소에 들어 있지 않아요.
 
 ## 앱이 처음 실행할 때 원래 배포처에서 내려받는 것 (Miro에는 들어 있지 않음)

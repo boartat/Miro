@@ -1,0 +1,67 @@
+From f4ddc01732275efc9beb9a44d1cac99611259b20 Mon Sep 17 00:00:00 2001
+From: boartat <260228444+boartat@users.noreply.github.com>
+Date: Sat, 28 Nov 2026 20:00:49 +0900
+Subject: [PATCH] ntdll: Read images instead of mapping them under the macOS
+ hardened runtime.
+
+A notarized Wine must run with the hardened runtime. There, memory mapped from a file cannot be made executable,
+not even with com.apple.security.cs.disable-executable-page-protection, while anonymous memory can be with
+com.apple.security.cs.allow-unsigned-executable-memory (checked on macOS 27.2, Apple silicon: file-backed
+copy-on-write pages RW to RX fail with EACCES, anonymous pages RW to RX work). So no program started: "failed to
+set 60000020 protection on wineboot.exe section .text".
+
+When the process runs with the hardened runtime (CS_RUNTIME in its code signing status), images are read into
+their view the way Wine already reads them from removable media. Without it nothing changes.
+
+Written with AI assistance.
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+---
+ dlls/ntdll/unix/virtual.c | 24 ++++++++++++++++++++++++
+ 1 file changed, 24 insertions(+)
+
+diff --git a/dlls/ntdll/unix/virtual.c b/dlls/ntdll/unix/virtual.c
+index 2b04e958b3..6a8cf88c83 100644
+--- a/dlls/ntdll/unix/virtual.c
++++ b/dlls/ntdll/unix/virtual.c
+@@ -2883,6 +2883,26 @@ static IMAGE_BASE_RELOCATION *process_relocation_block( char *page, IMAGE_BASE_R
+  * Map an executable (PE format) image into an existing view.
+  * virtual_mutex must be held by caller.
+  */
++#if defined(__APPLE__) && defined(__aarch64__)
++/***********************************************************************
++ *           hardened_runtime
++ *
++ * Whether this process runs with the macOS hardened runtime (as a notarized Wine does). There, memory mapped from
++ * a file cannot be made executable, not even with the runtime's exceptions, while anonymous memory can
++ * (com.apple.security.cs.allow-unsigned-executable-memory): images are then read into memory instead of mapped.
++ */
++static BOOL hardened_runtime(void)
++{
++    extern int csops( pid_t pid, unsigned int ops, void *useraddr, size_t usersize );
++    static int result = -1;
++    uint32_t flags = 0;
++
++    if (result == -1)
++        result = !csops( getpid(), 0 /* CS_OPS_STATUS */, &flags, sizeof(flags) ) && (flags & 0x10000 /* CS_RUNTIME */);
++    return result;
++}
++#endif
++
+ static NTSTATUS map_image_into_view( struct file_view *view, const UNICODE_STRING *nt_name, int fd,
+                                      struct pe_image_info *image_info, USHORT machine,
+                                      int shared_fd, BOOL removable )
+@@ -2901,6 +2921,10 @@ static NTSTATUS map_image_into_view( struct file_view *view, const UNICODE_STRIN
+     SIZE_T align_mask = max( image_info->alignment - 1, page_mask );
+     INT_PTR delta;
+ 
++#if defined(__APPLE__) && defined(__aarch64__)
++    if (hardened_runtime()) removable = TRUE;  /* read the sections, as from removable media */
++#endif
++
+     TRACE_(module)( "mapping PE file %s at %p-%p\n", debugstr_us(nt_name), ptr, ptr + total_size );
+ 
+     /* map the header */
+-- 
+2.54.0 (Apple Git-157)
+

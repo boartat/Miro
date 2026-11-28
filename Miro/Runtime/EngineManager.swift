@@ -88,12 +88,35 @@ enum ModernEngine {
     }
 }
 
-/// The miroe experimental engine: upstream ARM64 Wine + FEX + Mullion with miroe's patches, built in the miroe lab
-/// and put in place by `Scripts/install_miroe_engine.sh`. It is not downloadable yet: its loader is signed with a
-/// development provisioning profile (Apple's cross-architecture entitlement), which runs only on registered Macs.
+/// The miroe engine: upstream ARM64 Wine + FEX + Mullion with miroe's patches. Miro downloads it from its own
+/// GitHub release (Engine/miroe/scripts/sign-engine-dist.sh signs it with Developer ID for any Mac);
+/// `Scripts/install_miroe_engine.sh` still puts a lab build in place for development.
 enum MiroeEngine {
     /// Short on purpose, like `ModernEngine.root`
     static let root = MiroPaths.engines.appending(path: "miroe")
+    /// The engine this Miro downloads: one archive holding the `miroe` folder, pinned to its SHA-256
+    static let download = EngineComponent(
+        name: "miroe 엔진", url: URL(string: "https://github.com/boartat/Miro/releases/download/v1.2.0/miroe-engine-1.2.0.tar.xz")!,
+        sha256: "7957f0e2ec28a552bf3c09e019c20ee535b2786d9b6415e633a69b66357971e0", size: 353_015_380,
+        subpath: "miroe", destination: "miroe")
+    static var downloadSize: String { "약 \(Int64(download.size).byteString)" }
+    /// Which download is in place (written after it is unpacked): another one, or a lab build, is offered an update
+    static let receipt = root.appending(path: "miro/download.sha256")
+    static var isCurrent: Bool {
+        (try? String(contentsOf: receipt, encoding: .utf8))?.trimmingCharacters(in: .whitespacesAndNewlines) == download.sha256
+    }
+
+    /// ARM64 Wine needs Apple silicon and macOS 27 (the 8 GB __PAGEZERO and 4K pages it relies on)
+    static var supportedHere: Bool {
+        var arm64: Int32 = 0
+        var size = MemoryLayout<Int32>.size
+        let appleSilicon = sysctlbyname("hw.optional.arm64", &arm64, &size, nil, 0) == 0 && arm64 == 1
+        return appleSilicon && ProcessInfo.processInfo.isOperatingSystemAtLeast(OperatingSystemVersion(majorVersion: 27, minorVersion: 0, patchVersion: 0))
+    }
+    static var unsupportedReason: String {
+        let version = ProcessInfo.processInfo.operatingSystemVersion
+        return "miroe 엔진은 Apple 실리콘 Mac의 macOS 27 이상에서 돌아가요. 이 Mac은 macOS \(version.majorVersion).\(version.minorVersion)이에요."
+    }
     /// FreeType and what it links, bundled by the install script
     static let libraries = root.appending(path: "miro/lib")
     static let marker = root.appending(path: "miro/miroe.json")
@@ -207,7 +230,56 @@ final class EngineManager: ObservableObject {
         LaunchPlanner.plans(for: game).first?.engine ?? .miroe
     }
 
-    // MARK: - miroe (experimental)
+    // MARK: - miroe
+
+    /// Downloads the miroe engine, checks it against its SHA-256, puts it in place and makes its prefix. An engine
+    /// already there (an earlier download or a lab build) is replaced; the prefix and everything in it stay.
+    func installMiroe() async {
+        guard miroeState != .installing else { return }
+        guard MiroeEngine.supportedHere else {
+            miroeState = .failed(MiroeEngine.unsupportedReason)
+            detail = MiroeEngine.unsupportedReason
+            return
+        }
+        miroeState = .installing
+        progress = 0
+        do {
+            let component = MiroeEngine.download
+            let archive = MiroPaths.downloads.appending(path: "\(component.sha256.prefix(12))-\(component.url.lastPathComponent)")
+            detail = "\(component.name) 받는 중…"
+            try await download(component.url, to: archive, sha256: component.sha256, span: 0...0.85)
+            detail = "\(component.name) 푸는 중… (1~2분)"
+            progress = 0.87
+            WineEngine.miroe.killAll()
+            try await Task.detached(priority: .userInitiated) {
+                defer { try? FileManager.default.removeItem(at: archive) }
+                try Self.extractMiroe(archive, sha256: component.sha256)
+            }.value
+            progress = 0.95
+            miroeState = .notInstalled
+            await prepareMiroe()
+            progress = 1
+        } catch {
+            miroeState = .failed(error.localizedDescription)
+            detail = error.localizedDescription
+        }
+    }
+
+    /// Unpacks the engine archive beside the engines and swaps it in for the one in place
+    nonisolated private static func extractMiroe(_ archive: URL, sha256: String) throws {
+        let fileManager = FileManager.default
+        let staging = MiroPaths.engines.appending(path: ".miroe-staging-\(UUID().uuidString.prefix(8))")
+        try fileManager.createDirectory(at: staging, withIntermediateDirectories: true)
+        defer { try? fileManager.removeItem(at: staging) }
+        try Tar.untar(tarBall: archive, toURL: staging)
+        let unpacked = staging.appending(path: "miroe")
+        guard unpacked.appending(path: "bin/wine").fileExists, unpacked.appending(path: "miro/miroe.json").fileExists else {
+            throw InstallError(message: "받은 miroe 엔진에서 필요한 파일을 찾지 못했어요. 다시 시도해 주세요.")
+        }
+        try sha256.write(to: unpacked.appending(path: "miro/download.sha256"), atomically: true, encoding: .utf8)
+        if MiroeEngine.root.fileExists { try fileManager.removeItem(at: MiroeEngine.root) }
+        try fileManager.moveItem(at: unpacked, to: MiroeEngine.root)
+    }
 
     /// Makes the miroe engine's own prefix once its files are in place, without showing any window
     func prepareMiroe() async {

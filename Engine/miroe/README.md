@@ -16,5 +16,5 @@ Miro의 차세대 엔진이에요. 애플 실리콘 전용 ARM64 네이티브 Wi
 - Windows Steam이 miroe에서 돌아요(Mullion 패치 0003: 다른 프로세스 창에 그리는 Chromium 화면을 보여 줌). 클릭·키 입력·한글 조합(Wine 패치 `patches/wine/0001`)을 확인했고, 실제 계정으로 로그인해 상점까지 떠요.
 - 기본 글꼴은 Noto Sans CJK KR(SIL OFL 1.1)이에요. 엔진의 `miro/fonts`에 들어 있고 Miro가 각 C: 드라이브에 넣어요.
 - 예전 64비트 전용 엔진으로 만든 Windows 환경은 'Windows 환경 준비'를 한 번 더 누르면 32비트 지원이 더해져요.
-- 자동으로는 고르지 않고, 실패해도 다른 엔진으로 넘어가지 않아요. 라이브러리 자동 설치도 아직 하지 않아요.
-- 아직 내려받을 수 없어요. 서명된 엔진은 개발자 계정에 등록한 Mac에서만 돌아서, 공개 배포 방법은 아직 정하지 않았어요.
+- Miro 1.2부터 모든 게임과 Steam을 이 엔진으로 실행해요. 라이브러리 자동 설치는 아직 하지 않아요.
+- Miro가 첫 실행 때 릴리즈에서 받아요(`miroe-engine-1.2.0.tar.xz`, 337MB). Developer ID와 배포용 프로필로 서명해서 어느 Apple 실리콘 Mac(macOS 27 이상)에서나 돌아요([`docs/base.md`](docs/base.md) 10장, [`scripts/sign-engine-dist.sh`](scripts/sign-engine-dist.sh)).

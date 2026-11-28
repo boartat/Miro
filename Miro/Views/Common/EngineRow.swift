@@ -76,6 +76,12 @@ struct EngineRow: View {
             status(runtime.isReady ? "사용 중" : "설치 필요", ok: runtime.isReady)
         } else if kind == .miroe {
             switch engines.miroeState {
+            case .installed where !MiroeEngine.isCurrent && MiroeEngine.supportedHere:
+                HStack(spacing: 8) {
+                    status("준비됨", ok: true)
+                    Button("엔진 업데이트") { Task { await engines.installMiroe() } }
+                        .controlSize(.small)
+                }
             case .installed:
                 status(MiroeEngine.runs32Bit ? "준비됨" : "준비됨 · 64비트 전용", ok: true)
             case .installing:
@@ -94,8 +100,21 @@ struct EngineRow: View {
                     .buttonStyle(.borderedProminent)
                     .controlSize(.small)
                     .tint(Theme.accent)
+                } else if !MiroeEngine.supportedHere {
+                    status("macOS 27 이상 필요", ok: false)
                 } else {
-                    status("설치 스크립트 필요", ok: false)
+                    Button {
+                        Task {
+                            await engines.installMiroe()
+                            if engines.isReady(.miroe) { onInstalled?() }
+                        }
+                    } label: {
+                        Text(engines.miroeState == .notInstalled ? "엔진 받기 (\(MiroeEngine.downloadSize))" : "다시 시도")
+                            .font(.system(size: 11, weight: .semibold))
+                    }
+                    .buttonStyle(.borderedProminent)
+                    .controlSize(.small)
+                    .tint(Theme.accent)
                 }
             }
         } else {
@@ -171,7 +190,8 @@ struct EngineRow: View {
                 .foregroundStyle(Theme.stop)
                 .lineLimit(3)
         } else {
-            Label("게임 설정 → 호환 엔진에서 게임마다 고를 수 있어요. 자동으로는 쓰지 않아요.", systemImage: "info.circle")
+            Label(MiroeEngine.supportedHere ? "Windows 게임과 Steam은 모두 이 엔진에서 실행돼요." : MiroeEngine.unsupportedReason,
+                  systemImage: "info.circle")
                 .font(.system(size: 11))
                 .foregroundStyle(Theme.secondaryText)
         }

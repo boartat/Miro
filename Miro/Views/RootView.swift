@@ -15,6 +15,7 @@ struct RootView: View {
     @AppStorage(OnboardingView.completedKey) private var onboardingCompleted = false
     @State private var isDropTargeted = false
     @State private var setupPostponed = false
+    @ObservedObject private var engines = EngineManager.shared
 
     var body: some View {
         LibraryView()
@@ -47,9 +48,7 @@ struct RootView: View {
                     .interactiveDismissDisabled()
             }
             .sheet(isPresented: setupBinding) {
-                SetupView(postpone: { setupPostponed = true })
-                    .environmentObject(runtime)
-                    .environmentObject(InstallCenter.shared)
+                MiroeSetupView(postpone: { setupPostponed = true })
                     .interactiveDismissDisabled()
             }
             .task {
@@ -117,9 +116,13 @@ struct RootView: View {
     /// The engine setup waits until the first-run guide is closed
     private var setupBinding: Binding<Bool> {
         Binding(
-            // the first-run setup installs the classic runtime; with the miroe engine ready it is not needed
-            get: { !EngineManager.shared.isReady(.miroe) && (!runtime.isReady || runtime.isRunningSetup)
-                   && !setupPostponed && onboardingCompleted },
+            // the first-run setup downloads the miroe engine and makes its prefix; it stays up while that runs (or
+            // failed), and does not come for an engine whose prefix is ready
+            get: {
+                guard onboardingCompleted, !setupPostponed, !engines.isReady(.miroe) else { return false }
+                if case .failed = engines.miroeState { return true }
+                return !MiroeEngine.isInstalled || engines.miroeState == .installing
+            },
             set: { if !$0 { setupPostponed = true } }
         )
     }

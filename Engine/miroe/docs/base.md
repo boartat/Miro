@@ -375,3 +375,22 @@ Steam 창을 선명한 보통 크기로 보이려면 prefix 전체가 Retina + 1
 - 이걸 막자 이번엔 검은 사각형이 2프레임 보였어요. Chromium이 열리는 메뉴에 처음 내보내는 프레임은 투명한 검정인데, Mullion 레이어가 불투명이라 검게 보였어요. Windows에서는 DirectComposition이 알파를 지켜서 안 보여요.
 
 그래서 다른 프로세스가 그리는 창은 Wine 바탕을 내보이지 않고(앱이 직접 그린 게 생기면 다시 보여요), 첫 프레임 전까지 투명하게 두되 클릭은 창 전체에서 받아요. 그런 창에 그리는 Mullion 레이어는 알파를 지켜요. 녹화한 메뉴 여섯 번 열기(상점·라이브러리·커뮤니티 두 번씩)에서 흰 프레임도 검은 프레임도 없었고, 상점·라이브러리 화면에 뒤 창이 비치는 곳도 없었어요. 실제 마우스 클릭이 투명한 첫 프레임 동안 창에 들어가는지는 화면 조작 권한이 없어 직접 확인하지 못했어요.
+
+## 10. 다른 Mac에 배포하기: Developer ID 서명 (2026-11-28)
+
+**권한**: 개발용 프로필은 등록한 Mac에서만 돌아요. Developer ID용 프로필을 만들어 보니(App ID `app.miro.miroe`) `com.apple.developer.cross-architecture-support`가 들어 있고 `ProvisionsAllDevices`가 켜져 있었어요. 그래서 어느 Mac에서나 돌 수 있어요. Developer ID 인증서는 Xcode에서 만들 때 "Account Holder만 할 수 있어요" 오류가 나서, 웹사이트에서 CSR로 만들었어요.
+
+**서명**: [`scripts/sign-engine-dist.sh`](../scripts/sign-engine-dist.sh)가 엔진의 Mach-O 파일 47개 모두를 Developer ID, 보안 실행 모드(hardened runtime), 시간 도장으로 서명해요. 공증에 필요한 조건이에요. 로더(`wine.app`)에는 배포용 프로필과 아래 예외 권한을 넣어요.
+
+| 권한 | 왜 필요한가 |
+| --- | --- |
+| `allow-jit` | FEX가 x86 코드를 실행 중에 번역해요(MAP_JIT) |
+| `allow-unsigned-executable-memory` | Windows 프로그램 코드는 Mach-O 서명이 없는 메모리에서 돌아요 |
+| `disable-executable-page-protection` | CrossOver·Whisky와 같은 예외. 다만 이것만으로는 파일 매핑 메모리를 실행 가능으로 못 바꿔서 Wine 패치 0003이 필요했어요 |
+| `allow-dyld-environment-variables` | Miro가 엔진의 FreeType·GnuTLS·MoltenVK를 `DYLD_FALLBACK_LIBRARY_PATH`로 알려줘요. `bin/wine`에도 넣어야 변수가 로더까지 가요 |
+
+**보안 실행 모드에서 실행 메모리** (시험 프로그램, macOS 27.2): 익명 메모리 RW→RX는 돼요. 파일에서 매핑한 메모리(COW) RW→RX는 위 예외 권한이 다 있어도 `EACCES`예요. MAP_JIT은 돼요. Wine은 .exe/.dll을 파일 매핑으로 올려서 아무 프로그램도 시작하지 못했어요. 패치 [`wine/0003`](../patches/wine/0003-ntdll-Read-images-instead-of-mapping-them-under-the-.patch)는 보안 실행 모드일 때만 이미지를 읽어서 올려요(Wine이 이동식 디스크에서 하던 방식).
+
+**시험** (`tests/engine2/dist-test.sh`, 새 bottle): Windows 환경 만들기(32비트 포함), HTTPS 3종, Vulkan 2종, D3D9 3종, D3D12, D3D11 게임 시험(ARM64, x86 32비트), FEX x86_64 메모리 시험, 13개 모두 통과했어요. 처음에는 HTTPS·Vulkan이 실패한 것처럼 보였는데, 시험 스크립트의 `/usr/bin/timeout`이 Apple 시스템 프로그램이라 `DYLD_*` 변수를 지워서였어요. Miro는 엔진을 바로 실행해서 해당 없어요.
+
+**배포 파일**: `miroe-engine-1.2.0.tar.xz` 337MB(풀면 2.4GB, 빌드 도구·헤더·백업 제외). tar에 소유자 이름이 남지 않게 `--uid 0 --gid 0 --uname root --gname wheel`로 묶어요. Miro는 이 파일을 GitHub 릴리즈에서 받아 SHA-256을 확인하고 풀어요(`EngineManager.installMiroe`). macOS 27 아래나 Intel Mac에서는 받지 않고 이유를 보여줘요.

@@ -33,24 +33,24 @@ M4 Pro, macOS 27에서 직접 만든 테스트 프로그램으로 잰 값이에�
 
 ## 다른 프로젝트와 비교
 
-2026-11-27 기준이에요.
+2026-11-28 기준이에요.
 
-| | Miro 1.2 | **miroe** (연구 중) | CrossOver | Whisky | Highball | Hadron | MetalSharp |
+| | **Miro 1.2 (miroe)** | Miro 1.1 | CrossOver | Whisky | Highball | Hadron | MetalSharp |
 | --- | --- | --- | --- | --- | --- | --- | --- |
 | 가격 | 무료 | 무료 | 유료 | 무료 | 무료 | 무료 | 무료 |
-| 라이선스 | GPL-3.0 | GPL-3.0 (패치 LGPL) | 상용 | GPL-3.0 | GPL-3.0 | BSD-3 | AGPL-3.0 |
-| CPU 경로 | Rosetta | **ARM64 + FEX** | 26: Rosetta, 27 프리뷰: ARM64 + FEX | Rosetta | Rosetta | ARM64 + FEX | ARM64 + FEX |
-| DirectX 12 | D3DMetal | **Mullion (오픈소스)** | D3DMetal | D3DMetal | D3DMetal | vkd3d-proton + KosmicKrisp | Mullion |
-| 그래픽 메모리 회수 (MUMA) | — | **있음** | — | — | — | — | — |
-| 상태 | 배포 중 | 연구 중 | 배포 중 | 개발 중단 (2025) | 배포 중 | 배포 중 | 배포 중 |
+| 라이선스 | GPL-3.0 (엔진 패치 LGPL) | GPL-3.0 | 상용 | GPL-3.0 | GPL-3.0 | BSD-3 | AGPL-3.0 |
+| CPU 경로 | **ARM64 + FEX** | Rosetta | 26: Rosetta, 27 프리뷰: ARM64 + FEX | Rosetta | Rosetta | ARM64 + FEX | ARM64 + FEX |
+| DirectX 12 | **Mullion (오픈소스)** | D3DMetal | D3DMetal | D3DMetal | D3DMetal | vkd3d-proton + KosmicKrisp | Mullion |
+| 그래픽 메모리 회수 (MUMA) | **있음** | — | — | — | — | — | — |
+| 상태 | 배포 중 | 이전 버전 | 배포 중 | 개발 중단 (2025) | 배포 중 | 배포 중 | 배포 중 |
 
 MUMA가 고친 문제(#260)는 DXMT 본가와 Mullion 최신판에 그대로 있어요(2026-11-27 확인). 표의 "—"는 그 고침이 없다는 뜻이고, 다른 방식으로 메모리를 관리할 수는 있어요.
 
 ## 다운로드
 
-**[⬇︎ Miro.zip](https://github.com/boartat/Miro/releases/latest/download/Miro.zip)** · [모든 릴리즈](https://github.com/boartat/Miro/releases) · Apple 실리콘 Mac, macOS 14 이상
+**[⬇︎ Miro.zip](https://github.com/boartat/Miro/releases/latest/download/Miro.zip)** · [모든 릴리즈](https://github.com/boartat/Miro/releases) · [업데이트 내역](CHANGELOG.md) · Apple 실리콘 Mac, **macOS 27 이상** (macOS 26 이하는 [1.1.0](https://github.com/boartat/Miro/releases/tag/v1.1.0))
 
-처음 열 때 경고가 뜨면 **시스템 설정 → 개인정보 보호 및 보안 → 그래도 열기**를 눌러요. 안 되는 게임은 [이슈](https://github.com/boartat/Miro/issues/new/choose)로 알려 주세요.
+Miro는 Apple 공증을 받았어요. 첫 실행 때 miroe 엔진(약 340MB)을 받아요. 안 되는 게임은 [이슈](https://github.com/boartat/Miro/issues/new/choose)로 알려 주세요.
 
 ## 출처와 라이선스
 
