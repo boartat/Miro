@@ -136,7 +136,242 @@ ARM64에서는 같은 문제가 구조적으로 생기지 않을 것으로 봐�
 
 [`scripts/build-wine-upstream.sh`](../scripts/build-wine-upstream.sh)로 upstream Wine `ecca8e7552`(11.22-280, `sources.conf`의 `wine-upstream`)를 aarch64 + arm64ec + i386 PE로 **빌드했어요**. 로더는 `wine.app` 묶음으로 만들어져요. 서명 정보 없이 빌드해서 ad-hoc 서명이고, 실행하면 macOS가 바로 종료시켜요(exit 137). 예상대로예요.
 
-개발자 계정이 열리면 할 일:
-1. App ID와 개발용 provisioning profile을 만들어요(사용자가 직접, 위키의 순서).
-2. `CODESIGN_IDENTITY="Apple Development: …" PROVISIONING_PROFILE=… scripts/build-wine-upstream.sh`로 다시 서명해서 빌드해요.
-3. FEX(Hadron FEX 패치)와 Mullion + MUMA를 이 엔진에 올리고, 64비트·32비트·D3D12 테스트를 돌려요.
+## 7. 서명된 upstream ARM64 Wine에서 FEX 실행 (2026-11-27)
+
+유료 개발자 계정으로 App ID `app.miro.miroe`(Cross-architecture Compatibility Framework 켬), 이 Mac 등록, 개발용 provisioning profile을 만들었어요. 계정 화면에서 체크 하나로 켜지고 Apple에 따로 신청할 필요가 없었어요. 기존 Apple Development 인증서가 이미 이 팀 것이라 새 인증서도 필요 없었어요.
+
+[`scripts/sign-engine.sh`](../scripts/sign-engine.sh)가 빌드된 엔진의 `wine.app` 번들 ID를 `app.miro.miroe`로 바꾸고, profile을 넣고, upstream의 권한 파일(`loader/wine_arm64_entitlements.plist`)로 서명해요. 그다음 Hadron 패치를 올린 FEX를 `xtajit.dll`(i386, wow64)·`xtajit64.dll`(x86_64, ARM64EC)로 넣어요. profile이 앱 식별자를 대신 주므로 권한 파일에 따로 더할 건 없어요.
+
+| 확인 | 결과 |
+| --- | --- |
+| 로더 실행 | macOS가 더 이상 종료시키지 않음. 새 prefix 만들기, `cmd` 실행 정상 |
+| 32비트 x86 (FEX wow64) | DEP가 꺼진 실행 테스트 9가지 **모두 정확** (`DEP-OFF EXEC OK`) |
+| x86_64 (FEX ARM64EC) | Microsoft DXC가 SM 6.0 셰이더를 정상 컴파일. dev 엔진에서 나던 `KUSER_SHARED_DATA` 충돌이 사라졌어요 |
+
+알게 된 것:
+- prefix는 FEX를 넣은 **뒤에** 만들어야 해요. Wine은 시스템 파일이 없을 때 내장 DLL로 대신하는 걸 prefix를 처음 만들 때만 해요. 그래서 FEX 없이 만든 prefix는 `syswow64`가 비어서 32비트 프로그램이 `kernel32.dll`을 못 찾아요. 고치려면 FEX DLL을 `system32`에 복사하고 `WINEBOOTSTRAPMODE=1 wine wineboot -u`를 한 번 실행해요.
+- 테스트할 때 `perl`이나 `timeout` 같은 시스템 프로그램으로 감싸면 SIP가 `DYLD_*` 변수를 지워서 FreeType을 못 찾아요. 서명 때문이 아니에요.
+
+### Mullion + MUMA를 올린 결과
+
+[`scripts/build-mullion-upstream.sh`](../scripts/build-mullion-upstream.sh)로 Mullion + MUMA를 upstream Wine 빌드에 맞춰 ARM64X(arm64ec)와 32비트(win32)로 빌드해서 서명된 엔진에 넣었어요. 32비트 DLL은 같은 aarch64 유닉스 라이브러리를 Wine의 wow64로 불러요. Mullion을 넣은 뒤 이미 있던 prefix는 `wine wineboot -u`로 한 번 갱신해야 `winemetal.dll`이 들어가요.
+
+| 확인 | 결과 |
+| --- | --- |
+| D3D12 기본·SM 5.0 셰이더 (ARM64) | 기능 수준 12_2, 모든 픽셀·값 정확 |
+| SM 6.0~6.6 (ARM64) | 모두 정확. 셰이더는 **이 엔진에서 x64 DXC로 컴파일**했고, Intel 실습실에서 만든 것과 바이트까지 같아요 |
+| MUMA, 동적 버퍼 뒤 GPU 메모리 | 308MB (Hadron dev 엔진과 같음, 원래 Mullion 923MB) |
+| MUMA, 동적 텍스처 뒤 | 199MB (원래 971MB) |
+| MUMA, 게임형 테스트 메뉴 | 296MB (원래 582MB) |
+| MUMA, x86_64 프로그램 (FEX ARM64EC) | 308MB. ARM64 프로그램과 같아요 |
+
+**W1이 ARM64에서 생기는지**: 32비트 게임형 테스트(D3D11, Mullion + MUMA, FEX wow64)를 3번씩 돌렸어요.
+
+| 엔진 | DEP 꺼짐 (nonx) | DEP 켜짐 (nx) |
+| --- | ---: | ---: |
+| Intel Wine 11.21 + DXMT, Rosetta (대조군) | 36프레임 | 2,201프레임 |
+| 같은 엔진 + W1 패치 | 2,002프레임 | — |
+| **upstream ARM64 Wine + FEX + Mullion** | **2,182프레임** (2,184 / 2,181 / 2,182) | 2,180프레임 |
+
+ARM64 엔진에서는 DEP가 꺼져도 느려지지 않아요. FEX는 x86 코드를 번역해서 따로 실행하므로, 게임 메모리에 실제 실행 권한을 붙일 일이 없어서 Rosetta의 조건이 생기지 않아요. 그래서 **W1 패치는 ARM64 엔진에 넣지 않아요**(Rosetta 연구 성과로만 보존).
+
+다음: Miro 앱의 miroe 엔진을 이 기반(서명된 upstream Wine + FEX + Mullion + MUMA)으로 바꾸고, 32비트 게임 차단을 풀어요.
+
+## 8. HTTPS·Vulkan을 넣은 엔진 (miroe-2, 2026-11-28)
+
+앞 엔진의 `configure.log`에 GnuTLS와 MoltenVK가 없었어요. 그래서 Windows 프로그램의 HTTPS(schannel)와 Vulkan이 모두 안 됐어요. Homebrew의 `gnutls`(3.8.14, LGPL 2.1+)와 `molten-vk`(1.4.2, Apache 2.0)를 설치하고 `MIROE_RECONFIGURE=1 scripts/build-wine-upstream.sh`로 다시 빌드했어요. `Scripts/install_miroe_engine.sh`는 이제 Wine이 이름으로 여는 라이브러리(FreeType, GnuTLS, MoltenVK)와 그 의존 라이브러리 14개를 엔진 안에 복사하고, 라이선스 파일을 `miro/licenses`에 같이 넣어요. 실행 중에는 Homebrew가 필요 없어요.
+
+테스트 프로그램(직접 작성, `/Users/Shared/miroe-lab/tests/engine2`)으로 확인했어요. 사용자 게임은 쓰지 않았어요.
+
+| 확인 | 이전 엔진 | miroe-2 (ARM64 / x86_64 / 32비트) |
+| --- | --- | --- |
+| HTTPS (WinHTTP → store.steampowered.com) | 실패 `SEC_E_SECPKG_NOT_FOUND` | **200 OK** (1405 / 478 / 580ms) |
+| Vulkan (`vulkan-1.dll` → MoltenVK) | 실패 `VK_ERROR_INITIALIZATION_FAILED` | **Apple M4 Pro, Vulkan 1.3** (세 가지 모두) |
+| D3D9, WineD3D (OpenGL) | — | 2,383 / 2,366 / 1,781 fps |
+| D3D9, WineD3D (Vulkan 렌더러 → MoltenVK) | — | 212 / 216 / 223 fps |
+| D3D9, DXVK 3.2 | — | **어댑터 없음**: MoltenVK에 필수 기능이 없어요 |
+
+### DXVK가 MoltenVK에서 안 되는 이유
+
+[`scripts/build-dxvk.sh`](../scripts/build-dxvk.sh)로 DXVK 3.2의 d3d8·d3d9를 ARM64X(64비트, FEX 없이 네이티브)와 i386(32비트)으로 빌드했어요. 빌드는 되지만 DXVK가 기기를 거절해요. DXVK의 필수 기능 목록(`src/dxvk/dxvk_device_info.cpp`)을 MoltenVK 1.4.2가 알려 주는 기능과 비교하면 다섯 개가 없어요.
+
+| DXVK 필수 기능 | MoltenVK | 고칠 수 있나 |
+| --- | --- | --- |
+| `geometryShader` | 없음 | D3D9은 `ProcessVertices`(소프트웨어 정점 처리)에만 써요. 선택 기능으로 바꿀 수 있어요 |
+| `shaderCullDistance` | 없음 | D3D9에는 없는 기능. 선택으로 바꿀 수 있어요 |
+| `depthClipEnable` (VK_EXT_depth_clip_enable) | 확장 없음 | 깊이 클리핑을 셰이더로 흉내 내야 해요 |
+| `robustBufferAccess2` | 없음 | 범위 밖 읽기를 0으로 만드는 처리를 DXVK가 직접 해야 해요 |
+| `nullDescriptor` | 없음 | DXVK 2.0부터 빈 슬롯을 이걸로 처리해요. 더미 리소스로 되돌리는 큰 수정이에요 |
+
+`nullDescriptor`와 `robustBufferAccess2`는 DXVK 2.x 이후 리소스 바인딩 구조의 바탕이라, 줄 몇 개로 고칠 수 없어요. 그래서 이번 엔진에는 DXVK를 넣지 않았어요. D3D8·9는 지금 가장 빠른 WineD3D(OpenGL)로 돌아가요. 다음 방법 중 하나를 골라야 해요.
+
+1. DXVK를 MoltenVK에 맞게 고치는 miroe 패치 (위 다섯 가지). 가장 큰 작업이에요.
+2. MoltenVK가 `VK_EXT_robustness2`의 `nullDescriptor`를 지원할 때까지 기다리기.
+3. D3D9를 Metal로 바로 옮기는 별도 구현(예: Mullion이 D3D10~12를 하듯이).
+
+### Windows Steam을 miroe에서
+
+Miro-CX에 설치된 Steam 프로그램 파일만(로그인·계정 정보인 `config`, `userdata`는 빼고) 시험용 prefix에 복사해서 miroe-2로 실행했어요.
+
+| 단계 | 결과 |
+| --- | --- |
+| 32비트 `steam.exe` (FEX wow64) | 실행됨. 업데이트 창 표시 |
+| 업데이트 확인 (HTTPS) | 매니페스트 61초 만에 받음. CrossOver 기반 엔진에서도 61초. 업데이트 설치 후 스스로 재시작(종료 코드 42) |
+| 64비트 `steamwebhelper.exe` (Chromium, FEX ARM64EC) | 실행됨. Mullion으로 D3D11 기능 수준 11_1 장치를 만듦 |
+| 로그인 페이지 | 0.3초 만에 불러오고 로그인 서버와 통신까지 함 (`steamui_login.txt`) |
+| **화면** | **검은색**. 기본, `-cef-disable-gpu-compositing`, `-cef-use-vulkan`, `-cef-disable-gpu` 모두 같아요 |
+
+처음에는 페이지는 그려지는데 창에 화면이 전달되지 않았어요.
+
+**원인**: Chromium은 GPU 프로세스에서 그린 화면을, 브라우저 프로세스가 가진 최상위 창 안에 넣어요. Mullion은 화면을 보여 줄 Cocoa 창을 자기 프로세스 안에서만 찾았고, 못 찾으면 로그만 남겼어요(`winemetal: no window to present 0x30128 in`, Steam 한 번 실행에 5번). GPU를 끈 경우도 같은 종류예요. 시험 프로그램(`tests/engine2/xproc.c`)으로 확인해 보니, 이 Wine에서는 다른 프로세스의 창에 그리는 GDI 그림이 모두 사라져요(최상위 창에 직접, 또는 그 안에 만든 자기 자식 창에). upstream Wine에는 프로세스 간 화면 공유(`d3dkmt_swapchain`)가 새로 생겼지만, 텍스처를 넘기는 부분이 EGL(리눅스)에만 있어서 macOS에서는 쓸 수 없어요.
+
+**고친 방법** ([`patches/mullion/0003`](../patches/mullion/0003-winemetal-present-into-a-top-level-window-of-another.patch)): 창이 다른 프로세스 것이면, Mullion이 그리는 프로세스에 테두리 없는 패널을 만들어 Metal 화면을 넣어요. 패널은 클릭과 키 입력을 통과시키고 활성화되지 않아요. 다른 Wine 프로세스의 화면 위 창들 중에서 주인 창을 찾아, 그 바로 위에 붙여 둬요. 0.1초마다 주인 창의 위치와 순서를 확인해서 따라가요.
+
+| 확인 (시험용 prefix, 사용자 계정 없음) | 결과 |
+| --- | --- |
+| 로그인 화면 | **그려짐** (한국어 글자, QR 코드까지). 처음 실행 76초, 다음부터 24초 |
+| 위치 | 주인 창과 정확히 같음 (406,242) |
+| 창 이동 (다른 프로세스에서 `SetWindowPos`) | 따라감 |
+| 최소화 / 복원 | 같이 숨고 같이 나타남 |
+| 다른 창이 위에 열림 | 순서: 다른 창 → 패널 → Steam 창. 가려진 부분이 맞게 보여요 |
+| 같은 프로세스 창 (D3D11 게임형 테스트) | 기존 방식 그대로, 모든 단계 정상 |
+
+아직 확인하지 못한 것: 실제 마우스 클릭과 키보드 입력이 패널을 통과해 Steam에 닿는지(화면 제어 허가가 필요해서 사용자 확인 필요). 여러 화면, 전체 화면 전환, Spaces 이동도 아직이에요.
+
+**결론**: Steam 화면 전달 문제는 풀렸어요. 입력 통과를 확인하면 Steam을 miroe로 옮길 수 있어요. 단일 엔진 전환의 남은 조건은 (1) Steam 입력·로그인 확인 후 Steam을 miroe로 옮기기, (2) D3D8·9 백엔드 결정, (3) 공개 배포용 Developer ID 서명이에요.
+
+### 한글이 네모나 빈칸으로 나오는 문제 (GDI 글꼴 연결)
+
+Steam 업데이트 창처럼 Tahoma로 그리는 한국어 창은 miroe에서 네모(□)로, CrossOver 기반 엔진의 사용자 bottle에서는 빈칸으로 나왔어요. Mac의 Tahoma에는 한글이 없고, 글자가 없을 때 대신 쓸 글꼴 목록(`HKLM\…\FontLink\SystemLink`)은 Wine 기본값이 Windows 파일 이름(`GULIM.TTC`, `MALGUN.TTF` …)을 가리켜서 하나도 찾지 못했어요. Wine은 이 목록을 **파일 이름과 글꼴 이름이 둘 다 맞을 때만** 써요(`win32u/font.c`의 `load_system_links`). 그래서 글꼴 이름만 바꾸는 Replacements로는 해결되지 않았어요.
+
+Miro(`CJKFonts.swift`)가 이제 자주 쓰는 UI 글꼴 13개(Tahoma, Segoe UI, Arial, Microsoft Sans Serif 등)에 Mac 자체 글꼴 파일을 연결해요. 순서는 한국어 `AppleSDGothicNeo.ttc`, 일본어 `ヒラギノ角ゴシック W3.ttc`(글꼴 이름은 `Hiragino Sans W3`여야 찾아요), 중국어 `Hiragino Sans GB.ttc`, 마지막으로 `Arial Unicode.ttf`예요. 글꼴 파일은 복사하거나 배포하지 않아요.
+
+| 엔진 | 전 | 후 |
+| --- | --- | --- |
+| miroe | 네모 | 한국어 정상 ("Steam 업데이트 중…", "취소") |
+| CrossOver 기반 | 네모 | 한국어 정상 |
+| CrossOver 기반, 200% (Steam 설정) | — | 한국어 정상, 선명 |
+
+한국어 입력(IME): miroe의 upstream Wine에는 한국어 입력 수정(MR 7701 `856efc7a95`, `WM_IME_KEYDOWN` 지원 `c0a81478f5`, 조합 메시지 순서 `af8f1b5fd0`, `NSTextInput` 전환 `6725f8d94f`)이 이미 들어 있어요. 실제 입력 확인은 화면 제어 허가가 필요해서 아직이에요.
+
+## 9. miroe 단일 엔진 전환 (2026-11-28)
+
+Miro는 이제 모든 게임과 Steam을 miroe 엔진에서 돌려요. 그래픽은 엔진이 자동으로 골라요(DirectX 10~12 Mullion, 1~9 WineD3D). 게임 설정과 앱 설정에서 엔진·그래픽 선택은 없앴어요. 예전 엔진(클래식, 최신)과 그 C: 드라이브는 지우지 않고 남겨 둬요.
+
+### Steam 입력 확인 (miroe, 시험용 Steam)
+
+| 확인 | 결과 |
+| --- | --- |
+| 클릭 (오버레이 패널 통과) | 됨. "로그인 정보 저장" 체크를 껐다 켬 |
+| 영문 키 입력 | 됨 |
+| 한글 조합 표시 (구름 입력기 2벌식) | 고치기 전: 조합 중인 글자가 안 보이고 완성돼야 들어감. 고친 뒤: ㄱ → 그 → 근이 바로 보임 |
+| 받침 넘김, 백스페이스 | 근+ㅏ → 그 + 나, 나 → ㄴ → 지움 |
+
+**원인**: Steam의 Chromium은 조합 중인 글자를 직접 그리지 않고 Windows 기본 입력기 창에 맡겨요(`WM_IME_COMPOSITION`을 `DefWindowProc`로 넘김). 그 창의 위치로 넘긴 값이 `CFS_RECT`에 빈 영역 (0,0)-(0,0)이어서, Wine의 기본 입력기 창(`imm32/ime.c`)이 1×1 크기로 화면 구석에 떴어요(TSF를 쓸 때는 창 아래쪽 바깥). CrossOver 기반 엔진도 증상이 같았어요.
+
+**고친 방법** ([`patches/wine/0001`](../patches/wine/0001-imm32-Show-the-composition-where-the-text-field-is-w.patch)): 프로그램이 쓸 수 있는 위치를 주지 않으면, 그 스레드의 캐럿 위치, 없으면 입력칸을 클릭한 자리에 조합 창을 띄워요. 글꼴은 창의 DPI에 맞춘 크기예요. 창 크기도 실제 창 크기와 비교해서 맞춰요. Steam의 TSF를 끄는 설정은 필요 없었어요(끄지 않아도 같은 결과). 빌드 스크립트가 `patches/wine`을 자동으로 적용해요.
+
+### 기본 글꼴: Noto Sans CJK KR
+
+`NotoSansCJKkr-Regular.otf`, `-Bold.otf` (SIL OFL 1.1, notofonts/noto-cjk `f8d157532fbf`)를 엔진의 `miro/fonts`에 넣고, Miro가 각 prefix의 `C:\windows\Fonts`로 복제해요(APFS 복제라 공간을 더 쓰지 않음). 연결은 이렇게 해요.
+- `FontSubstitutes`: `MS Shell Dlg`, `MS Shell Dlg 2` → Noto (Wine 대화상자 기본 글꼴)
+- `Replacements`: 한국어·일본어·중국어 Windows 글꼴 이름, Segoe UI → Noto
+- `SystemLink`: Tahoma 등 13개 글꼴의 첫 대체 글꼴 → Noto, 그다음 Mac 글꼴
+
+| 시험 (`tests/engine2/fonttest.c`, `drawtest.c`) | 전 | 후 |
+| --- | --- | --- |
+| MS Shell Dlg / Malgun Gothic / 굴림 / Meiryo | Arial로 바뀜, 한글 없음, GDI+ 실패 | 그 이름 그대로, 한글·가나 있음, GDI+ 성공 |
+| Tahoma로 "한글" 그리기 | — | 그려짐 (MS Shell Dlg와 같은 픽셀 수) |
+
+Unity처럼 글꼴 파일을 직접 여는 게임이 `C:\windows\Fonts`에서 찾을 수 있게 파일도 그 폴더에 둬요. 게임 안의 글자가 안 보이던 문제(Sword Art Online: Integral Factor, miroe prefix에는 한글 글꼴 설정이 없었음)는 이 변경으로 고쳐졌을 가능성이 높지만, 사용자 게임은 실행하지 않아서 확인하지 못했어요.
+
+### 화면 배율: Steam은 200 %, 게임은 예전처럼
+
+Steam 창을 선명한 보통 크기로 보이려면 prefix 전체가 Retina + 192 DPI여야 해요(`-forcedesktopscaling 2`는 Windows판 Steam에서 효과 없음: 창이 절반 크기). Wine은 Retina와 DPI를 프로그램별로 나누지 않아요. 그래서 게임마다 `AppCompatFlags\Layers`에 `~ DPIUNAWARE`를 붙여요(Wine은 실행 파일 이름으로 찾음).
+
+| 시험 (`dpitest.c`, Retina + 192 DPI) | DPI | 화면 크기 | 800×600 창 |
+| --- | --- | --- | --- |
+| 표시 없음 (DPI 모름 프로그램) | 96 | 1512×982 | 800×600 pt (2배로 그림) |
+| 스스로 고해상도 요청 (Unity처럼) | 192 | 3024×1964 | — |
+| 스스로 요청 + `~ DPIUNAWARE` | 96 (요청 거절됨) | 1512×982 | 800×600 pt |
+| `~ HIGHDPIAWARE` | 192 | 3024×1964 | 400×300 pt |
+
+게임 설정의 "Mac 원래 해상도로 실행"을 켜면 표시를 빼서 실제 픽셀로 그려요. 기본은 꺼짐이에요. Sword Art Online은 저장된 전체 화면 크기가 3024×1964(Retina 원본)였어요. 해상도 목록(`EnumDisplaySettings`)은 표시가 있어도 3024×1964로 나와서, 전체 화면 해상도를 고르는 게임은 직접 확인이 필요해요.
+
+### 마이그레이션 (`MiroeMigration.swift`)
+
+- Steam: miroe prefix의 `Program Files (x86)\Steam`을 예전 엔진(Miro-CX)의 Steam 폴더로 연결해요. 설치된 게임, 다운로드, Steam 설정이 그대로 쓰여요. 복사하지 않고, 링크를 지우면 원래대로예요.
+- 세이브와 설정: 예전 prefix들의 `AppData\Local`, `LocalLow`, `Roaming`, `Documents`, `Saved Games`를 miroe 사용자 폴더로 APFS 복제해요. 이미 있는 것은 덮어쓰지 않고, 원본은 그대로 둬요. 복제한 목록은 prefix의 `.miro-migration.json`에 남겨요.
+- Miro 라이브러리의 Steam 게임 경로는 링크 경로로 저절로 바뀌어요.
+
+### Steam 화면과 동작
+
+- 로그인은 Steam 창에서만 해요. Miro는 Steam 파일(`config/loginusers.vdf`, `config/avatarcache`)에서 계정 이름과 사진을 읽어요. 브라우저 로그인과 그 쿠키 저장소는 지웠어요.
+- "라이브러리 미리보기": Steam이 라이브러리 그림을 둔 앱(`appcache/librarycache/<appid>`) 중 `appcache/appinfo.vdf`(v28/v29 바이너리)에서 종류가 game인 것. 사용자 Steam에서 146개.
+- 버튼은 "Steam에서 보기"(`steam://nav/games/details/<appid>`, 스토어는 `steam://store/<appid>`)만 있어요. 다운로드와 실행은 Steam에서 해요.
+- 다운로드가 끝난 게임만 Miro 라이브러리에 들어와요. 받는 중이고 한 번도 실행하지 않은 항목은 빠졌다가 끝나면 들어와요.
+- "Steam 열기"는 사이드바에 항상 있어요. Steam이 없으면 눌러서 설치해요.
+- Steam 게임을 누르면 Steam이 꺼져 있을 때 먼저 켜고, Steam 창 프로세스가 뜰 때까지(최대 4분) 기다린 뒤 `-applaunch`로 실행해요.
+- Miro를 끄면 설정과 상관없이 Steam과 모든 Wine 프로세스를 끝내요.
+- 로그 파일은 64MB에서 더 쓰지 않아요(예전에 한 게임 로그가 40GB가 됨).
+
+### 실제 사용자 Steam으로 확인 (miroe, 2026-11-28)
+
+| 확인 | 결과 |
+| --- | --- |
+| 예전 Steam 폴더 연결 + 설정 가져오기 | 저장된 계정으로 자동 로그인, 한국어 화면, 상점 페이지 그려짐 |
+| 처음 실행 | Steam이 "Steam Service Error"를 메인 창 뒤에 띄움 → `steamservice.exe /install`로 해결, Miro가 Steam을 켤 때 자동으로 해요 |
+| 엔진 파일을 바꾼 뒤 처음 실행 | Wine이 prefix를 업데이트하며 Wine Mono 설치 창을 띄움 → Miro가 먼저 조용히 업데이트해요 (`updateMiroePrefixIfNeeded`) |
+| 라이브러리 미리보기 읽기 (앱 코드) | 282개 중 게임 146개, 3 ms |
+| Miro 종료 | Steam을 포함한 Wine 프로세스 8개가 모두 꺼짐 |
+| 세이브 복제 | 예전 prefix의 `Documents`는 Mac 문서 폴더로 가는 링크라서, 열면 macOS 폴더 접근 허가 창을 기다려 멈췄어요 → 링크는 건너뛰어요 |
+
+아직 화면으로 확인하지 못한 것: Miro 사이드바와 라이브러리 미리보기 화면, Miro로 켠 Steam의 200 % 배율, 게임별 DPI 표시가 실제 게임에 주는 효과, 게임 안 글꼴.
+
+### Steam 깜빡임과 업데이트 창 네모 글자 (2026-11-28)
+
+**깜빡임** ([`patches/mullion/0004`](../patches/mullion/0004-winemetal-keep-the-panels-over-another-process-s-win.patch)): 사용자 Steam에서 측정했어요. Steam 창 하나에 Mullion 패널이 둘이었어요(메인 화면, 상점 내용). 둘 다 0.1초마다 "Steam 창 바로 위"로 자리를 옮기려 해서 계속 순서가 바뀌었어요(60번 중 45/15). 메뉴를 열면 더 심했어요. Wine은 메뉴 같은 자식 창을 부모 창 바로 위에 붙여 두는데, 패널이 그 사이에 끼면 다시 밀려나서 메뉴 패널이 메인 패널 밑으로 들어갔다 나왔다 했어요(80번 중 43/37). 이제 부모 창과 그 위에 붙은 같은 프로세스 창들을 한 묶음으로 보고, 묶음 맨 위에 패널을 창 순서대로 올려요. 패널이 없는 자식 창(Wine이 직접 그리는 대화상자)은 패널에 구멍을 내서 보이게 해요. 패널 위치는 1초에 60번 확인해요(전에는 10번).
+
+| 확인 (사용자 Steam, miroe) | 전 | 후 |
+| --- | --- | --- |
+| 가만히 둘 때 창 순서 | 60번 중 45/15로 바뀜 | 100번 모두 같음 |
+| 메뉴(라이브러리 호버)를 연 채 | 80번 중 43/37 (메뉴가 숨었다 나타남) | 80번 모두 같음, 메뉴가 맨 위 |
+| 탭 이동 (라이브러리 ↔ 상점) | — | 정상, 순서 고정 |
+| 화면 30장 연속 캡처 | — | 크기 변화 ±1 % (빈 프레임 없음) |
+| 패널 확인에 드는 시간 | — | GPU 프로세스 샘플의 약 0.3 % |
+
+남은 것: 메뉴가 처음 나타나는 순간 한 프레임 검게 보일 수 있어요(패널은 이제 투명이라 줄었지만 확인 전). 창을 끌 때 따라오는 지연은 16 ms 이하가 됐지만 측정하지 못했어요. 구멍 내기는 대화상자가 실제로 뜨는 상황에서 아직 확인하지 못했어요.
+
+**업데이트 창 네모 글자**: miroe bottle의 글꼴 설정은 맞았어요(64비트·32비트 시험 프로그램 모두 Tahoma, MS Shell Dlg, 메시지 글꼴로 한글을 그림). 원인은 순서였어요. "Steam 열기"가 두 번 눌리자 두 번째 요청이 준비(글꼴, 200 %, prefix 업데이트)를 기다리지 않고 steam.exe를 바로 띄웠고, Steam이 13:10:39에, 글꼴 설정이 13:10:40에 끝났어요. 이제 준비 중에 온 요청은 기다렸다가 Steam이 뜬 뒤 넘겨요. 업데이트 창은 Steam이 업데이트할 때만 떠서 화면으로는 다시 확인하지 못했어요.
+
+### 창을 끌 때 깜빡임, "steamwebhelper가 응답하지 않습니다" (2026-11-28 저녁)
+
+**응답 없음 창**: 이 창을 띄운 건 두 번째 steam.exe였어요(창 주인 pid가 두 번째 Steam). Miro 로그 두 개가 1초 간격(`steam-1795856954.log`, `…955.log`)이었고, 두 번째 Steam은 Steam 자체 경고 `Steam3Master_SharedMemFile already existed - do we have two IPC servers with the same name?`를 남겼어요. 웹 화면 프로세스도 `-steampid=32`와 `-steampid=48` 두 벌이었는데, 두 번째 것은 끝내 뜨지 않았어요. "Steam 열기"를 두 번 누르면, 첫 Steam이 아직 뜨는 중이라 넘겨줄 곳이 없어서 두 번째 steam.exe가 Steam을 하나 더 띄웠어요. 이제 Miro는 Steam 웹 화면 프로세스가 뜬 뒤에만 두 번째 steam.exe를 띄우고(인자를 넘기고 바로 끝나요), 그 전에 온 요청은 기다렸다가 넘겨요(`SteamClient.start`, `handOverWhenUp`). 덧붙여, 켜고 2분 뒤 `--use-gl=disabled` GPU 프로세스가 한 번 뜨는 건 크롬이 GPU 정보를 모으는 정상 동작이에요(매 실행 2분째, 곧 끝남).
+
+**창을 끌 때 깜빡임** ([`patches/mullion/0005`](../patches/mullion/0005-winemetal-show-another-process-s-window-through-Wine.patch)): 0004의 패널은 GPU 프로세스의 별도 창이라, 창을 끌면 1초에 60번 확인하며 뒤따라가요. 그동안 창 가장자리가 보였어요. 다른 프로젝트를 찾아봤어요.
+
+| 프로젝트 | 방식 |
+| --- | --- |
+| Chromium (macOS) | GPU 프로세스가 CAContext로 레이어를 내보내고, 브라우저 프로세스가 CALayerHost로 창 안에 넣어요. 창 서버가 창의 일부로 그려서 따라갈 필요가 없어요 |
+| Wine upstream (winemac.drv, 2026-05, Marc-Aurel Zent) | 같은 방식으로 다른 프로세스 창에 Vulkan·OpenGL을 그려요(`CAContextSwapChain`, `WM_MACDRV_CREATE_REMOTE_LAYER`). miroe의 Wine에 이미 들어 있어요 |
+| Wine MR 11058 (메일링 리스트) | DXMT 같은 Metal 렌더러가 ExtEscape로 창의 Metal 레이어를 받는 제안이에요. miroe의 Wine에는 없어요 |
+| Proton (`hack_append_command_line`) | 일부 CEF 런처에 `--in-process-gpu`, `--use-gl=swiftshader` 같은 옵션을 덧붙여요. steamwebhelper 항목은 없어요. Windows Steam 최신판에는 `-cef-in-process-gpu` 옵션도 없어요(`steamclient64.dll` 문자열 확인) |
+| CrossOver·Whisky 사용자 글 | GPU 가속을 끄거나 Steam을 다시 켜는 우회책뿐이에요 |
+
+그래서 Mullion이 Wine의 `CAContextSwapChain`을 그대로 불러 쓰게 했어요. 화면 레이어는 그 레이어 트리 안의 클라이언트 영역 자리에 들어가요. 레이어 좌표는 왼쪽 아래가 원점이에요. 처음엔 왼쪽 위로 계산해서 상점 화면이 탭 글자를 가렸고, 고쳤어요. 이 클래스가 없는 Wine에서는 예전 패널(0003/0004)을 그대로 써요.
+
+| 확인 | 0004 (패널) | 0005 (CALayerHost) |
+| --- | --- | --- |
+| 창을 움직이는 동안(2 ms 간격 샘플) | 1029번 중 442번 패널이 창에서 어긋남, 최대 5 pt | GPU 프로세스 창 없음, 1041번 중 0번 |
+| 시험용 Steam 로그인 창 | 정상 | 정상, 브라우저 창만 캡처해도 내용이 들어 있음 |
+| 사용자 Steam: 상점·라이브러리 탭, 상점 메뉴(호버) | — | 제자리에 그려짐 |
+| 크기 줄이기, 최소화 후 복원 | — | 창에 맞게 다시 그려짐 |
+| 켜고 2분 뒤 GPU 정보 프로세스, 응답 없음 창 | 응답 없음 창 뜸(두 번째 Steam) | 뜨지 않음 |
+
+창 이동은 Win32 `SetWindowPos`로 60단계 움직여 시험했어요(`tests/engine2/winctl.c glide`). 마우스로 직접 끄는 건 화면 조작 권한 요청에 응답이 없어서 못 해 봤지만, 그림이 창 안에 들어 있어서 창과 따로 움직일 수 없어요. Miro에서 "Steam 열기"를 빠르게 두 번 누르는 시험도 같은 이유로 아직 못 했어요.
+
+**메뉴가 열릴 때 번쩍임** (Wine [`patches/wine/0002`](../patches/wine/0002-winemac-Show-nothing-of-a-window-another-process-dra.patch), Mullion `0005`): 상점·라이브러리·커뮤니티에 마우스를 올리면 메뉴 자리가 먼저 밝게 2프레임 보였어요(화면 녹화로 확인). 원인은 두 가지였어요.
+- Wine은 새 창 바탕을 macOS 창 기본색(밝은 회색)으로 채우고 바로 화면에 올려요. Steam은 메뉴를 GPU로만 그리니까, 첫 프레임이 오기 전 이 바탕이 보였어요. 다시 열 때도 같았어요. Chromium은 메뉴를 열 때마다 스왑체인을 새로 만들고, 그건 창이 뜬 뒤예요.
+- 이걸 막자 이번엔 검은 사각형이 2프레임 보였어요. Chromium이 열리는 메뉴에 처음 내보내는 프레임은 투명한 검정인데, Mullion 레이어가 불투명이라 검게 보였어요. Windows에서는 DirectComposition이 알파를 지켜서 안 보여요.
+
+그래서 다른 프로세스가 그리는 창은 Wine 바탕을 내보이지 않고(앱이 직접 그린 게 생기면 다시 보여요), 첫 프레임 전까지 투명하게 두되 클릭은 창 전체에서 받아요. 그런 창에 그리는 Mullion 레이어는 알파를 지켜요. 녹화한 메뉴 여섯 번 열기(상점·라이브러리·커뮤니티 두 번씩)에서 흰 프레임도 검은 프레임도 없었고, 상점·라이브러리 화면에 뒤 창이 비치는 곳도 없었어요. 실제 마우스 클릭이 투명한 첫 프레임 동안 창에 들어가는지는 화면 조작 권한이 없어 직접 확인하지 못했어요.

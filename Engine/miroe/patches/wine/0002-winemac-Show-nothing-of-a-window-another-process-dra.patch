@@ -1,0 +1,217 @@
+From fa4cf24bce2e869b69e50f505194c6c275826694 Mon Sep 17 00:00:00 2001
+From: boartat <260228444+boartat@users.noreply.github.com>
+Date: Sat, 28 Nov 2026 19:06:06 +0900
+Subject: [PATCH] winemac: Show nothing of a window another process draws until
+ that process does.
+
+A window whose content another process draws (a CALayerHost over it, as Chromium's GPU process draws the
+browser's windows) showed its own surface first: the window background colour, light grey, for the frames
+before that process's first frame. Steam's menus flashed it each time they opened, two frames.
+
+Such a window now leaves its surface out while nothing but the background colour was drawn into it, as a
+flip-model swapchain does on Windows: the window is clear until the other process's first frame, and still
+takes the clicks over all of it. Chromium makes a popup's swapchain anew each time it opens, after the window
+shows, so this holds for a window that has ever shown another process's layer. Something drawn into the
+surface (Chromium drawing without its GPU process) shows as before.
+
+Written with AI assistance.
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+---
+ dlls/winemac.drv/cocoa_window.m | 46 ++++++++++++++++++++++++++++++---
+ dlls/winemac.drv/macdrv_cocoa.h |  2 +-
+ dlls/winemac.drv/surface.c      | 23 ++++++++++++++++-
+ 3 files changed, 65 insertions(+), 6 deletions(-)
+
+diff --git a/dlls/winemac.drv/cocoa_window.m b/dlls/winemac.drv/cocoa_window.m
+index 3f2150bbae..cd6101c2f9 100644
+--- a/dlls/winemac.drv/cocoa_window.m
++++ b/dlls/winemac.drv/cocoa_window.m
+@@ -262,6 +262,8 @@ @interface WineContentView : WineBaseView <NSTextInput, NSViewLayerContentScaleD
+ 
+     WineMetalView *_metalView;
+     NSMutableDictionary<NSNumber*, CALayerHost*>* _caLayerHosts;
++    BOOL _drawnByOtherProcess;
++    BOOL _surfaceDrawn;
+ }
+ 
+ @property (readonly, nonatomic) BOOL everHadGLContext;
+@@ -276,6 +278,8 @@ - (void) wine_setBackingSize:(const int*)newBackingSize;
+     - (WineMetalView*) newMetalViewWithDevice:(id<MTLDevice>)device;
+     - (void) addCALayerHostViewWithContextId:(CAContextID)contextId;
+     - (void) removeCALayerHostView:(CAContextID)contextId;
++    - (BOOL) showsOnlyRemoteLayers;
++    - (BOOL) setSurfaceDrawn:(BOOL)drawn;
+ 
+ @end
+ 
+@@ -314,6 +318,7 @@ - (BOOL) becameEligibleParentOrChild;
+     - (void) becameIneligibleChild;
+ 
+     - (void) windowDidDrawContent;
++    - (void) checkTransparency;
+ 
+ @end
+ 
+@@ -413,7 +418,13 @@ - (void) updateLayer
+             return;
+ 
+         layer.position = surfaceRect.origin;
+-        layer.contents = _ioSurface;
++        /* A window another process draws (a CALayerHost over it all: Chromium's GPU process draws the browser's
++         * windows) shows only what that process draws, as a flip-model swapchain does on Windows. Its own surface
++         * holds nothing but the window background colour, which would show before that process's first frame
++         * (a light flash each time a popup opens). Chromium makes a popup's swapchain anew each time it opens,
++         * after the window shows, so this holds for a window that has ever shown another process's layer, until
++         * something is drawn into its own surface (Chromium drawing without its GPU process, say). */
++        layer.contents = [self showsOnlyRemoteLayers] ? nil : _ioSurface;
+         [window windowDidDrawContent];
+ 
+         // If the window may be transparent, then we have to invalidate the
+@@ -588,7 +599,13 @@ - (void) addCALayerHostViewWithContextId:(CAContextID)contextId
+ 
+         [self.layer addSublayer:host];
+         [_caLayerHosts setObject:host forKey:@(contextId)];
++        _drawnByOtherProcess = YES;
+ 
++        /* Until that process's first frame the window is clear rather than the window background colour; it still
++         * takes the clicks over all of it (the window server would pass them through where it is clear) */
++        [self.window setIgnoresMouseEvents:NO];
++        [self setNeedsDisplay:YES];
++        [(WineWindow*)self.window checkTransparency];
+         [(WineWindow*)self.window windowDidDrawContent];
+     }
+ 
+@@ -597,6 +614,20 @@ - (void) removeCALayerHostView:(CAContextID)contextId
+         NSNumber* key = @(contextId);
+         [[_caLayerHosts objectForKey:key] removeFromSuperlayer];
+         [_caLayerHosts removeObjectForKey:key];
++        [self setNeedsDisplay:YES];
++        [(WineWindow*)self.window checkTransparency];
++    }
++
++    - (BOOL) showsOnlyRemoteLayers
++    {
++        return _drawnByOtherProcess && !_surfaceDrawn;
++    }
++
++    - (BOOL) setSurfaceDrawn:(BOOL)drawn
++    {
++        BOOL changed = _surfaceDrawn != drawn;
++        _surfaceDrawn = drawn;
++        return changed;
+     }
+ 
+     - (void) setLayerRetinaProperties:(BOOL)mode
+@@ -1901,7 +1932,8 @@ - (BOOL) needsTransparency
+     {
+         WineContentView *view = self.contentView;
+         return self.contentView.layer.mask || [view hasShape] || self.usePerPixelAlpha ||
+-                (gl_surface_mode == GL_SURFACE_BEHIND && [view hasGLDescendant]);
++                (gl_surface_mode == GL_SURFACE_BEHIND && [view hasGLDescendant]) ||
++                ([view isKindOfClass:[WineContentView class]] && [view showsOnlyRemoteLayers]);
+     }
+ 
+     - (void) checkTransparency
+@@ -3237,7 +3269,7 @@ void macdrv_set_cocoa_parent_window(WineWindow *window, WineWindow *parent)
+  * Push a window surface color pixel update in a specified rect (in non-client
+  * area coordinates).
+  */
+-void macdrv_window_set_io_surface(WineWindow *window, IOSurfaceRef s, CGRect rect, CGRect dirty)
++void macdrv_window_set_io_surface(WineWindow *window, IOSurfaceRef s, CGRect rect, CGRect dirty, bool drawn)
+ {
+ @autoreleasepool
+ {
+@@ -3250,7 +3282,13 @@ void macdrv_window_set_io_surface(WineWindow *window, IOSurfaceRef s, CGRect rec
+ 
+         [view setIOSurface:surface];
+         [view setSurfaceRect:cgrect_mac_from_win(rect)];
+-        [view setNeedsDisplayInRect:NSRectFromCGRect(cgrect_mac_from_win(dirty))];
++        if ([view setSurfaceDrawn:drawn])
++        {
++            [view setNeedsDisplay:YES];
++            [window checkTransparency];
++        }
++        else
++            [view setNeedsDisplayInRect:NSRectFromCGRect(cgrect_mac_from_win(dirty))];
+ 
+         [surface release];
+     });
+diff --git a/dlls/winemac.drv/macdrv_cocoa.h b/dlls/winemac.drv/macdrv_cocoa.h
+index 221b5fb71f..ff5ae4568a 100644
+--- a/dlls/winemac.drv/macdrv_cocoa.h
++++ b/dlls/winemac.drv/macdrv_cocoa.h
+@@ -473,7 +473,7 @@ extern void macdrv_order_cocoa_window(WineWindow *window, WineWindow *prev,
+ extern void macdrv_set_cocoa_window_frame(WineWindow *window, const CGRect* new_frame);
+ extern void macdrv_get_cocoa_window_frame(WineWindow *window, CGRect* out_frame);
+ extern void macdrv_set_cocoa_parent_window(WineWindow *window, WineWindow *parent);
+-extern void macdrv_window_set_io_surface(WineWindow *window, IOSurfaceRef s, CGRect rect, CGRect dirty);
++extern void macdrv_window_set_io_surface(WineWindow *window, IOSurfaceRef s, CGRect rect, CGRect dirty, bool drawn);
+ extern void macdrv_window_shape_changed(WineWindow *window, bool has_shape);
+ extern void macdrv_set_window_shape(WineWindow *window, const CGRect *rects, int count);
+ extern void macdrv_set_window_alpha(WineWindow *window, CGFloat alpha);
+diff --git a/dlls/winemac.drv/surface.c b/dlls/winemac.drv/surface.c
+index b688052f4f..aef0efd921 100644
+--- a/dlls/winemac.drv/surface.c
++++ b/dlls/winemac.drv/surface.c
+@@ -48,6 +48,8 @@ struct macdrv_window_surface
+     IOSurfaceRef            front_buffer;
+     IOSurfaceRef            back_buffer;
+     vImage_Buffer           shape_mask;
++    DWORD                   background; /* what the surface was filled with */
++    BOOL                    drawn;      /* whether anything else was drawn into it */
+ };
+ 
+ static struct macdrv_window_surface *get_mac_surface(struct window_surface *surface);
+@@ -115,6 +117,20 @@ static void update_shape(vImage_Buffer *shape_mask, const BITMAPINFO *shape_info
+     }
+ }
+ 
++/* whether a rect of the color bits holds nothing but the color the surface was filled with */
++static BOOL only_background(const void *bits, size_t row_bytes, const RECT *rect, DWORD background)
++{
++    int x, y;
++
++    for (y = rect->top; y < rect->bottom; y++)
++    {
++        const DWORD *row = (const DWORD *)((const BYTE *)bits + y * row_bytes);
++        for (x = rect->left; x < rect->right; x++)
++            if ((row[x] & 0x00ffffff) != background) return FALSE;
++    }
++    return TRUE;
++}
++
+ /***********************************************************************
+  *              macdrv_surface_flush
+  */
+@@ -140,6 +156,8 @@ static BOOL macdrv_surface_flush(struct window_surface *window_surface, const RE
+     };
+ 
+     if (shape_changed && shape_bits) update_shape(&surface->shape_mask, shape_info, shape_bits);
++    /* a window another process draws into keeps its surface out of sight until something is drawn into it */
++    if (!surface->drawn) surface->drawn = !only_background(color_bits, src.rowBytes, dirty, surface->background);
+ 
+     IOSurfaceLock(io_surface, 0, NULL);
+     if (use_alpha)
+@@ -169,7 +187,8 @@ static BOOL macdrv_surface_flush(struct window_surface *window_surface, const RE
+ 
+     surface->back_buffer = surface->front_buffer;
+     surface->front_buffer = io_surface;
+-    macdrv_window_set_io_surface(surface->window, io_surface, cgrect_from_rect(*rect), cgrect_from_rect(*dirty));
++    macdrv_window_set_io_surface(surface->window, io_surface, cgrect_from_rect(*rect), cgrect_from_rect(*dirty),
++                                 surface->drawn);
+ 
+     if (shape_changed) macdrv_window_shape_changed(surface->window, !!shape_bits);
+ 
+@@ -275,6 +294,8 @@ static struct window_surface *create_surface(HWND hwnd, WineWindow *window, cons
+         }
+         window_background &= 0x00ffffff;
+         memset_pattern4(bits, &window_background, info->bmiHeader.biSizeImage);
++        surface->background = window_background;
++        surface->drawn = FALSE;
+     }
+ 
+     return window_surface;
+-- 
+2.54.0 (Apple Git-157)
+

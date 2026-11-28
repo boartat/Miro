@@ -1,0 +1,194 @@
+From 806f058fe409d1e8385b2e3613937a3afb93fd61 Mon Sep 17 00:00:00 2001
+From: boartat <260228444+boartat@users.noreply.github.com>
+Date: Sat, 28 Nov 2026 12:30:44 +0900
+Subject: [PATCH] imm32: Show the composition where the text field is when the
+ program gives no position.
+
+Chromium-based clients (Steam) pass a composition form of CFS_RECT with an empty
+area, or never set one, and leave the composition to the default IME window.
+That window ended up 1x1 at the screen corner (or below the window), so Korean
+syllables were invisible until they were committed. Use the caret of the
+window's thread, or else where the text field was clicked, and a font sized for
+the window's DPI. Also compare against the real window rect before moving it.
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+---
+ dlls/imm32/ime.c | 106 +++++++++++++++++++++++++++++++++++++++++------
+ 1 file changed, 94 insertions(+), 12 deletions(-)
+
+diff --git a/dlls/imm32/ime.c b/dlls/imm32/ime.c
+index a6663d7972..d110d57bd7 100644
+--- a/dlls/imm32/ime.c
++++ b/dlls/imm32/ime.c
+@@ -222,6 +222,70 @@ static UINT ime_set_composition_status( HIMC himc, BOOL composition )
+     return msg;
+ }
+ 
++/* miroe: where the user last clicked when a composition started (screen coordinates) */
++static POINT ime_ui_click;
++static BOOL ime_ui_click_valid;
++
++/* the program gave a usable composition position (an empty CFS_RECT area or a point left at (0,0) is not one) */
++static BOOL ime_ui_form_is_set( const COMPOSITIONFORM *form )
++{
++    if (form->dwStyle == CFS_DEFAULT) return FALSE;
++    if (form->dwStyle == CFS_RECT) return !IsRectEmpty( &form->rcArea );
++    return form->ptCurrentPos.x || form->ptCurrentPos.y;
++}
++
++/* the text cursor of the window's thread, or the click that focused the text field */
++static BOOL ime_ui_fallback_anchor( INPUTCONTEXT *ctx, POINT *pt )
++{
++    GUITHREADINFO info = {.cbSize = sizeof(info)};
++    HWND target = ctx->hWnd ? ctx->hWnd : GetFocus();
++
++    if (target && GetGUIThreadInfo( GetWindowThreadProcessId( target, NULL ), &info ) && info.hwndCaret &&
++        (info.rcCaret.left || info.rcCaret.top) && info.rcCaret.bottom > info.rcCaret.top)
++    {
++        pt->x = info.rcCaret.right;
++        pt->y = (info.rcCaret.top + info.rcCaret.bottom) / 2;
++        ClientToScreen( info.hwndCaret, pt );
++        return TRUE;
++    }
++    if (!ime_ui_click_valid) return FALSE;
++    *pt = ime_ui_click;
++    return TRUE;
++}
++
++static void ime_ui_remember_click( INPUTCONTEXT *ctx )
++{
++    HWND target = ctx->hWnd ? ctx->hWnd : GetFocus();
++    RECT window;
++    POINT pt;
++
++    ime_ui_click_valid = FALSE;
++    if (!target || !GetCursorPos( &pt )) return;
++    GetWindowRect( GetAncestor( target, GA_ROOT ), &window );
++    if (!PtInRect( &window, pt )) return;
++    ime_ui_click = pt;
++    ime_ui_click_valid = TRUE;
++}
++
++/* miroe: the composition font when the program set none: the dialog font at the window's DPI, readable on Retina */
++static HFONT ime_ui_default_font( HWND hwnd )
++{
++    static HFONT cached;
++    static UINT cached_dpi;
++    UINT dpi = GetDpiForWindow( hwnd );
++
++    if (!dpi) dpi = USER_DEFAULT_SCREEN_DPI;
++    if (!cached || cached_dpi != dpi)
++    {
++        if (cached) DeleteObject( cached );
++        cached = CreateFontW( -MulDiv( 15, dpi, USER_DEFAULT_SCREEN_DPI ), 0, 0, 0, FW_NORMAL, FALSE, FALSE, FALSE,
++                              DEFAULT_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS, CLEARTYPE_QUALITY,
++                              DEFAULT_PITCH | FF_DONTCARE, L"MS Shell Dlg" );
++        cached_dpi = dpi;
++    }
++    return cached;
++}
++
+ static void ime_ui_paint( HIMC himc, HWND hwnd )
+ {
+     PAINTSTRUCT ps;
+@@ -230,7 +294,8 @@ static void ime_ui_paint( HIMC himc, HWND hwnd )
+     HMONITOR monitor;
+     MONITORINFO mon_info;
+     INPUTCONTEXT *ctx;
+-    POINT offset;
++    POINT offset, anchor;
++    BOOL place = FALSE;
+     WCHAR *str;
+     UINT len;
+ 
+@@ -252,6 +317,7 @@ static void ime_ui_paint( HIMC himc, HWND hwnd )
+         SIZE size;
+         POINT pt;
+ 
++        if (!font && (font = ime_ui_default_font( hwnd ))) font = SelectObject( hdc, font );
+         GetTextExtentPoint32W( hdc, str, len, &size );
+         pt.x = size.cx;
+         pt.y = size.cy;
+@@ -269,7 +335,7 @@ static void ime_ui_paint( HIMC himc, HWND hwnd )
+          * CFS_FORCE_POSITION: appears to behave just like CFS_POINT
+          *    maybe because the default MSIME does not do any IME adjusting.
+          */
+-        if (ctx->cfCompForm.dwStyle != CFS_DEFAULT)
++        if (ime_ui_form_is_set( &ctx->cfCompForm ))
+         {
+             POINT cpt = ctx->cfCompForm.ptCurrentPos;
+             ClientToScreen( ctx->hWnd, &cpt );
+@@ -279,6 +345,27 @@ static void ime_ui_paint( HIMC himc, HWND hwnd )
+             rect.bottom = rect.top + pt.y;
+             offset.x = offset.y = 0;
+             monitor = MonitorFromPoint( cpt, MONITOR_DEFAULTTOPRIMARY );
++
++            if (ctx->cfCompForm.dwStyle == CFS_RECT)
++            {
++                RECT client = ctx->cfCompForm.rcArea;
++                MapWindowPoints( ctx->hWnd, 0, (POINT *)&client, 2 );
++                IntersectRect( &rect, &rect, &client );
++                DrawTextW( hdc, str, len, &rect, DT_WORDBREAK | DT_CALCRECT );
++            }
++        }
++        else if (ime_ui_fallback_anchor( ctx, &anchor ))
++        {
++            /* miroe: the program never said where its text cursor is (an empty CFS_RECT or a point at the
++             * corner, as Chromium-based clients like Steam leave it): show the composition next to the caret,
++             * or where the text field was clicked, instead of a 1x1 window at the corner */
++            rect.left = anchor.x;
++            rect.top = anchor.y - (pt.y + 6) / 2;
++            rect.right = rect.left + pt.x + 10;
++            rect.bottom = rect.top + pt.y + 6;
++            offset.x = 5;
++            offset.y = 3;
++            monitor = MonitorFromPoint( anchor, MONITOR_DEFAULTTOPRIMARY );
+         }
+         else /* CFS_DEFAULT */
+         {
+@@ -294,15 +381,7 @@ static void ime_ui_paint( HIMC himc, HWND hwnd )
+             monitor = MonitorFromWindow( target, MONITOR_DEFAULTTOPRIMARY );
+         }
+ 
+-        if (ctx->cfCompForm.dwStyle == CFS_RECT)
+-        {
+-            RECT client = ctx->cfCompForm.rcArea;
+-            MapWindowPoints( ctx->hWnd, 0, (POINT *)&client, 2 );
+-            IntersectRect( &rect, &rect, &client );
+-            DrawTextW( hdc, str, len, &rect, DT_WORDBREAK | DT_CALCRECT );
+-        }
+-
+-        if (ctx->cfCompForm.dwStyle == CFS_DEFAULT)
++        if (!ime_ui_form_is_set( &ctx->cfCompForm ))
+         {
+             /* make sure we are on the desktop */
+             mon_info.cbSize = sizeof(mon_info);
+@@ -328,6 +407,7 @@ static void ime_ui_paint( HIMC himc, HWND hwnd )
+         }
+ 
+         new_rect = rect;
++        place = TRUE;
+         OffsetRect( &rect, offset.x - rect.left, offset.y - rect.top );
+         DrawTextW( hdc, str, len, &rect, DT_WORDBREAK );
+ 
+@@ -338,7 +418,8 @@ static void ime_ui_paint( HIMC himc, HWND hwnd )
+     EndPaint( hwnd, &ps );
+     ImmUnlockIMC( himc );
+ 
+-    if (!EqualRect( &rect, &new_rect ))
++    GetWindowRect( hwnd, &rect );
++    if (place && !IsRectEmpty( &new_rect ) && !EqualRect( &rect, &new_rect ))
+         SetWindowPos( hwnd, HWND_TOPMOST, new_rect.left, new_rect.top, new_rect.right - new_rect.left,
+                       new_rect.bottom - new_rect.top, SWP_NOACTIVATE );
+ }
+@@ -371,6 +452,7 @@ static void ime_ui_start_composition( HIMC himc, HWND hwnd )
+ {
+     INPUTCONTEXT *ctx;
+     if (!(ctx = ImmLockIMC( himc ))) return;
++    if (!ime_ui_form_is_set( &ctx->cfCompForm )) ime_ui_remember_click( ctx );
+     ime_ui_update_window( ctx, hwnd );
+     ImmUnlockIMC( himc );
+ }
+-- 
+2.54.0 (Apple Git-157)
+

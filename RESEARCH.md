@@ -39,7 +39,7 @@ Mullion은 GPU가 쉬는 동안 메모리를 상주시키는 "하트비트"가 �
 - **원인** (Wine 없이 분리): Rosetta에서 쓰기+실행 메모리 위의 Metal 버퍼는 GPU가 쓴 뒤 CPU가 약 **1.2초** 멈춰요. DEP가 꺼진 32비트 프로그램은 Wine이 모든 메모리에 실행 권한을 붙여서 매번 걸려요.
 - **해결**: 실제로 코드가 실행되는 페이지에만 실행 권한을 주는 Wine 패치.
 - **결과**: 같은 시간에 **35 → 1,997프레임 (57배)**. 코드 실행 9가지 경우는 모두 그대로 동작해요.
-- ARM64 엔진은 W^X 때문에 이 조건이 생기지 않아서, Rosetta 연구 성과로만 보존해요. 패치: [`patches/wine-x86_64`](Engine/miroe/patches/wine-x86_64)
+- ARM64 엔진(upstream Wine + FEX + Mullion)에서는 같은 테스트가 DEP를 꺼도 **2,182프레임**으로 느려지지 않았어요. 그래서 Rosetta 연구 성과로만 보존해요. 패치: [`patches/wine-x86_64`](Engine/miroe/patches/wine-x86_64)
 
 ### 4. D3DMetal 없이 DirectX 12 (ARM64 + Mullion)
 
@@ -58,7 +58,7 @@ Mullion은 GPU가 쉬는 동안 메모리를 상주시키는 "하트비트"가 �
 
 ## 다음
 
-1. 개발자 계정 서명이 생기면 upstream ARM64 Wine에 FEX + Mullion + MUMA를 올려서 같은 테스트를 다시 돌려요.
+1. ~~서명된 upstream ARM64 Wine + FEX + Mullion + MUMA~~ 끝: 32비트·x86_64 프로그램, D3D12·SM 6 테스트, MUMA 효과 모두 그대로예요([기반 검토 7절](Engine/miroe/docs/base.md)). 다음은 Miro 앱의 miroe 엔진을 이 기반으로 바꾸는 거예요.
 2. 동기화 비용: 이벤트·세마포어마다 wineserver를 왕복해요(Unity 게임 스레드 시간의 55%, [Hadron #148](https://github.com/Broyojo/hadron/issues/148)). 이미 있는 msync 계열을 가져와 재요.
 3. 하드웨어 TSO, 메시 셰이더·레이 트레이싱 확인, 실제 메모리 압력 아래 MUMA 동작.
 

@@ -1,0 +1,284 @@
+From 9dfe478e86cc6977e60267fd0199dee92bc3ab30 Mon Sep 17 00:00:00 2001
+From: boartat <260228444+boartat@users.noreply.github.com>
+Date: Sat, 28 Nov 2026 13:19:35 +0900
+Subject: [PATCH] winemetal: keep the panels over another process's windows in
+ an order nothing fights
+
+Steam flickered: its whole window all the time, more on hover and click. Two rules took turns:
+- Chromium keeps a second swapchain for the same window (0x0 at first), and each panel moved itself to just
+  above the owner's window every 0.1 s, so the two panels swapped places;
+- Wine keeps a window's owned windows (Chromium's menus and popups) as Cocoa child windows directly above it,
+  so a panel put between them was moved back at once, and the menu's panel ended up under the main one.
+An owner window and the windows of its process stacked directly above it now form a run; the panels of every
+window in the run go on top of it, those of the lowest window first, each window's in the order they were made,
+and nothing is reordered while that order holds. A window of the run without a panel (one Wine draws itself,
+like a dialog) shows through a hole in the panels below it. A panel of an empty client area stays hidden.
+One timer for all panels, 60 times a second instead of 10, so a panel follows its window while it is dragged.
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+---
+ src/winemetal/unix/winemetal_unix.c | 206 +++++++++++++++++++++++-----
+ 1 file changed, 171 insertions(+), 35 deletions(-)
+
+diff --git a/src/winemetal/unix/winemetal_unix.c b/src/winemetal/unix/winemetal_unix.c
+index 8dc0f4c..e9cf686 100644
+--- a/src/winemetal/unix/winemetal_unix.c
++++ b/src/winemetal/unix/winemetal_unix.c
+@@ -2591,8 +2591,8 @@ struct macdrv_functions_t {
+   // for a top-level window of another process (Chromium's GPU process draws into the browser process's window):
+   // a borderless panel of this process over that window's client area, kept just above the owner's Cocoa window
+   NSPanel *overlay;
+-  NSTimer *timer;
+-  CGWindowID anchor; // the owner's Cocoa window
++  CGWindowID anchor;
++  NSArray *holes; // where windows without a panel show through (view coordinates) // the owner's Cocoa window
+   struct WMTWindowPlacement placement;
+ }
+ @end
+@@ -2675,41 +2675,166 @@ MullionAreaOver(CGRect frame, struct WMTWindowPlacement placement) {
+   );
+ }
+ 
+-// puts the panel over the owner's window and above it, or hides it while that window is not on the screen. on the
+-// main thread: from a placement, and from the host's timer (the owner's window moves and comes to the front without
+-// this process presenting anything)
+-static void
+-MullionSyncOverlay(MullionMetalHost *host, BOOL placed) {
+-  NSArray *windows = MullionWindowList();
++// every panel of this process, in the order they were made, and one timer for all of them
++static NSMutableArray *mullion_overlays;
++static NSTimer *mullion_overlay_timer;
++
++// puts one panel over its owner's window, or hides it while that window is not on the screen or the client area is
++// empty. returns whether it is shown. `windows` is the on-screen list, front to back
++static BOOL
++MullionSyncOverlayFrame(MullionMetalHost *host, NSArray *windows, BOOL placed) {
+   CGRect bounds = CGRectZero;
+-  NSInteger anchor_index = -1, overlay_index = -1, index = 0;
++  BOOL found = NO;
+ 
+-  if (!(host->placement.flags & WMTWindowPlacementShown)) {
+-    [host->overlay orderOut:nil];
+-    return;
++  if (!(host->placement.flags & WMTWindowPlacementShown) || !host->placement.width || !host->placement.height) {
++    // a hidden window, or a swapchain of a 0x0 client area (Chromium keeps such a one next to the real one)
++    if (host->overlay.visible)
++      [host->overlay orderOut:nil];
++    return NO;
+   }
+   if (placed || !host->anchor)
+     host->anchor = MullionFindAnchor(windows, MullionCGRect(MullionScreenRect(host->placement)), &bounds);
+   for (NSDictionary *info in windows) {
+-    CGWindowID number = [info[(id)kCGWindowNumber] unsignedIntValue];
+-    if (number == host->anchor) {
+-      anchor_index = index;
+-      CGRectMakeWithDictionaryRepresentation((CFDictionaryRef)info[(id)kCGWindowBounds], &bounds);
+-    } else if (number == (CGWindowID)host->overlay.windowNumber)
+-      overlay_index = index;
+-    index++;
+-  }
+-  if (anchor_index < 0) {
++    if ([info[(id)kCGWindowNumber] unsignedIntValue] != host->anchor)
++      continue;
++    CGRectMakeWithDictionaryRepresentation((CFDictionaryRef)info[(id)kCGWindowBounds], &bounds);
++    found = YES;
++    break;
++  }
++  if (!found) {
+     // the owner's window is hidden, minimized or gone
+     host->anchor = 0;
+-    [host->overlay orderOut:nil];
+-    return;
++    if (host->overlay.visible)
++      [host->overlay orderOut:nil];
++    return NO;
+   }
+   NSRect area = MullionAreaOver(bounds, host->placement);
+   if (!NSEqualRects(host->overlay.frame, area))
+     [host->overlay setFrame:area display:NO];
+-  if (overlay_index != anchor_index - 1)
+-    [host->overlay orderWindow:NSWindowAbove relativeTo:host->anchor];
++  return YES;
++}
++
++// keeps every shown panel over its owner's window, in an order the window server and Wine leave alone.
++// Wine keeps a window's owned windows (Chromium's menus and popups, dialogs) as Cocoa child windows, directly above
++// it; a panel put between them is moved back at once, and two rules fighting like that flicker (the earlier rule
++// put each panel directly above its own window). So an owner window and the windows of its process stacked directly
++// above it form one run, and the panels of every window in the run go on top of the run: those of the lowest window
++// first, each window's panels in the order they were made. A window of the run that has no panel (one Wine draws
++// itself, like a dialog) shows through a hole in the panels below it. on the main thread: from a placement, and 60
++// times a second (the owner's window moves and comes to the front without this process presenting anything)
++static void
++MullionSyncOverlays(MullionMetalHost *placed) {
++  NSArray *windows = MullionWindowList();
++  NSUInteger index;
++  NSMutableDictionary *position = [NSMutableDictionary dictionary];
++  NSMutableSet *panels = [NSMutableSet set];
++  NSString *wine = NSRunningApplication.currentApplication.localizedName;
++
++  for (MullionMetalHost *host in mullion_overlays)
++    [panels addObject:@((CGWindowID)host->overlay.windowNumber)];
++  index = 0;
++  for (NSDictionary *info in windows)
++    position[info[(id)kCGWindowNumber]] = @(index++);
++
++  NSMutableArray *shown = [NSMutableArray array];
++  NSMutableSet *anchors = [NSMutableSet set];
++  for (MullionMetalHost *host in mullion_overlays)
++    if (MullionSyncOverlayFrame(host, windows, host == placed)) {
++      [shown addObject:host];
++      [anchors addObject:@(host->anchor)];
++    }
++
++  // each owner window's run: the top of it, and the windows in it that have no panel
++  NSMutableDictionary *top = [NSMutableDictionary dictionary], *holes = [NSMutableDictionary dictionary];
++  for (NSNumber *anchor in anchors) {
++    NSNumber *at = position[anchor];
++    if (!at)
++      continue;
++    NSDictionary *own = windows[at.unsignedIntegerValue];
++    NSNumber *pid = own[(id)kCGWindowOwnerPID];
++    NSInteger run_top = at.integerValue;
++    NSMutableArray *hole_list = [NSMutableArray array];
++    for (NSInteger k = at.integerValue - 1; k >= 0; k--) {
++      NSDictionary *info = windows[k];
++      NSNumber *number = info[(id)kCGWindowNumber];
++      if ([panels containsObject:number])
++        continue;
++      if (![info[(id)kCGWindowOwnerPID] isEqual:pid] || ![info[(id)kCGWindowOwnerName] isEqual:wine] ||
++          [info[(id)kCGWindowLayer] intValue] != 0)
++        break;
++      run_top = k;
++      CGRect frame;
++      if (![anchors containsObject:number] &&
++          CGRectMakeWithDictionaryRepresentation((CFDictionaryRef)info[(id)kCGWindowBounds], &frame))
++        [hole_list addObject:[NSValue valueWithRect:NSRectFromCGRect(frame)]];
++    }
++    top[anchor] = windows[run_top][(id)kCGWindowNumber];
++    holes[anchor] = hole_list;
++  }
++
++  // the panels over each run: lowest owner window first, then by when they were made
++  NSMutableDictionary *runs = [NSMutableDictionary dictionary];
++  for (MullionMetalHost *host in shown) {
++    NSNumber *run = top[@(host->anchor)];
++    if (!run)
++      continue;
++    NSMutableArray *list = runs[run] ?: (runs[run] = [NSMutableArray array]);
++    [list addObject:host];
++  }
++  for (NSNumber *run in runs) {
++    NSMutableArray *list = runs[run];
++    [list sortWithOptions:NSSortStable
++          usingComparator:^NSComparisonResult(MullionMetalHost *a, MullionMetalHost *b) {
++            NSInteger pa = [position[@(a->anchor)] integerValue], pb = [position[@(b->anchor)] integerValue];
++            return pa == pb ? NSOrderedSame : pa > pb ? NSOrderedAscending : NSOrderedDescending;
++          }];
++    NSInteger expected = [position[run] integerValue] - 1;
++    BOOL in_order = YES;
++    for (MullionMetalHost *host in list) {
++      NSNumber *at = position[@((CGWindowID)host->overlay.windowNumber)];
++      if (!at || at.integerValue != expected--)
++        in_order = NO;
++    }
++    if (!in_order) {
++      NSInteger below = run.integerValue;
++      for (MullionMetalHost *host in list) {
++        [host->overlay orderWindow:NSWindowAbove relativeTo:below];
++        below = host->overlay.windowNumber;
++      }
++    }
++    // holes for the panel-less windows above each panel's own window
++    for (MullionMetalHost *host in list) {
++      NSArray *hole_list = holes[@(host->anchor)];
++      NSRect frame = host->overlay.frame;
++      NSRect primary = NSScreen.screens.firstObject.frame;
++      NSMutableArray *cut = [NSMutableArray array];
++      for (NSValue *value in hole_list) {
++        NSRect window = value.rectValue; // CoreGraphics coordinates
++        NSRect cocoa = NSMakeRect(window.origin.x, primary.size.height - NSMaxY(window), window.size.width, window.size.height);
++        NSRect part = NSIntersectionRect(cocoa, frame);
++        if (!NSIsEmptyRect(part))
++          [cut addObject:[NSValue valueWithRect:NSOffsetRect(part, -frame.origin.x, -frame.origin.y)]];
++      }
++      if ([cut isEqualToArray:host->holes ?: @[]])
++        continue;
++      [host->holes release];
++      host->holes = [cut copy];
++      if (!cut.count) {
++        host->layer.mask = nil;
++        continue;
++      }
++      CAShapeLayer *mask = [CAShapeLayer layer];
++      CGMutablePathRef path = CGPathCreateMutable();
++      CGPathAddRect(path, NULL, CGRectMake(0, 0, frame.size.width, frame.size.height));
++      for (NSValue *value in cut)
++        CGPathAddRect(path, NULL, NSRectToCGRect(value.rectValue));
++      mask.path = path;
++      mask.fillRule = kCAFillRuleEvenOdd;
++      mask.frame = CGRectMake(0, 0, frame.size.width, frame.size.height);
++      CGPathRelease(path);
++      host->layer.mask = mask;
++    }
++  }
+ }
+ 
+ static void
+@@ -2724,8 +2849,8 @@ MullionPlaceOverlay(MullionMetalHost *host, struct WMTWindowPlacement placement)
+                       defer:NO];
+     host->overlay.ignoresMouseEvents = YES;
+     host->overlay.hasShadow = NO;
+-    host->overlay.opaque = YES;
+-    host->overlay.backgroundColor = NSColor.blackColor;
++    host->overlay.opaque = NO;
++    host->overlay.backgroundColor = NSColor.clearColor;
+     host->overlay.releasedWhenClosed = NO;
+     host->overlay.hidesOnDeactivate = NO;
+     host->overlay.floatingPanel = NO;
+@@ -2737,13 +2862,17 @@ MullionPlaceOverlay(MullionMetalHost *host, struct WMTWindowPlacement placement)
+     host->view.autoresizingMask = NSViewWidthSizable | NSViewHeightSizable;
+     host->overlay.contentView = host->view;
+     host->layer.contentsScale = host->overlay.backingScaleFactor;
+-    host->timer = [[NSTimer scheduledTimerWithTimeInterval:0.1
+-                                                   repeats:YES
+-                                                     block:^(NSTimer *timer) {
+-                                                       MullionSyncOverlay(host, NO);
+-                                                     }] retain];
++    if (!mullion_overlays)
++      mullion_overlays = [[NSMutableArray alloc] init];
++    [mullion_overlays addObject:host];
++    if (!mullion_overlay_timer)
++      mullion_overlay_timer = [[NSTimer scheduledTimerWithTimeInterval:1.0 / 60
++                                                               repeats:YES
++                                                                 block:^(NSTimer *timer) {
++                                                                   MullionSyncOverlays(nil);
++                                                                 }] retain];
+   }
+-  MullionSyncOverlay(host, YES);
++  MullionSyncOverlays(host);
+ }
+ 
+ // puts a host's view over its window's client area, making it when it is not there yet. on the main thread
+@@ -2869,9 +2998,16 @@ _ReleaseMetalView(void *obj) {
+   if ([(id)params->handle isKindOfClass:[MullionMetalHost class]]) {
+     MullionMetalHost *host = (MullionMetalHost *)params->handle;
+     dispatch_async(dispatch_get_main_queue(), ^{
+-      [host->timer invalidate];
+-      [host->timer release];
++      if (host->overlay) {
++        [mullion_overlays removeObject:host];
++        if (!mullion_overlays.count) {
++          [mullion_overlay_timer invalidate];
++          [mullion_overlay_timer release];
++          mullion_overlay_timer = nil;
++        }
++      }
+       [host->overlay orderOut:nil];
++      [host->holes release];
+       [host->overlay close];
+       [host->overlay release];
+       [host->view removeFromSuperview];
+-- 
+2.54.0 (Apple Git-157)
+

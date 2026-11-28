@@ -1,0 +1,260 @@
+From 13396745479e135c8aac0bfea1cbce6c6f5695d2 Mon Sep 17 00:00:00 2001
+From: boartat <260228444+boartat@users.noreply.github.com>
+Date: Sat, 28 Nov 2026 02:34:43 +0900
+Subject: [PATCH] winemetal: present into a top-level window of another process
+
+Chromium (Steam's web helper) draws in its GPU process into a window whose top-level window belongs to the browser
+process. On WineHQ's winemac.drv the GPU process has no Cocoa window for it, so the frames went nowhere and the
+window stayed black. Such a layer now goes into a borderless, click-through panel of the drawing process, placed over
+the owner's Cocoa window (found among the on-screen windows of other Wine processes) and kept just above it; it
+follows the owner's window when it moves, is minimized or is covered. The placement carries the client area's
+position on the Windows desktop and whether the top-level window is shown.
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+---
+ src/mullion/mullion_window.hpp      |   5 +-
+ src/winemetal/unix/winemetal_unix.c | 164 +++++++++++++++++++++++++++-
+ src/winemetal/winemetal.h           |   8 ++
+ 3 files changed, 175 insertions(+), 2 deletions(-)
+
+diff --git a/src/mullion/mullion_window.hpp b/src/mullion/mullion_window.hpp
+index 78f3419..f4e1f3d 100644
+--- a/src/mullion/mullion_window.hpp
++++ b/src/mullion/mullion_window.hpp
+@@ -13,12 +13,15 @@ windowPlacement(HWND hWindow) {
+   auto awareness = SetThreadDpiAwarenessContext(DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2);
+   auto top_level = GetAncestor(hWindow, GA_ROOT);
+   RECT client{}, around{};
++  POINT origin{};
+   GetClientRect(hWindow, &client);
+   GetClientRect(top_level, &around);
++  ClientToScreen(hWindow, &origin);
+   MapWindowPoints(hWindow, top_level, reinterpret_cast<POINT *>(&client), 2);
+   WMTWindowPlacement placement{
+       (uint64_t)(uintptr_t)top_level, client.left, client.top, client.right - client.left, client.bottom - client.top,
+-      around.right, around.bottom, (uint32_t)GetSystemMetrics(SM_CXSCREEN)
++      around.right, around.bottom, (uint32_t)GetSystemMetrics(SM_CXSCREEN), origin.x, origin.y,
++      IsWindowVisible(top_level) && !IsIconic(top_level) ? WMTWindowPlacementShown : 0u
+   };
+   SetThreadDpiAwarenessContext(awareness);
+   return placement;
+diff --git a/src/winemetal/unix/winemetal_unix.c b/src/winemetal/unix/winemetal_unix.c
+index f4420e3..8dc0f4c 100644
+--- a/src/winemetal/unix/winemetal_unix.c
++++ b/src/winemetal/unix/winemetal_unix.c
+@@ -2588,15 +2588,171 @@ struct macdrv_functions_t {
+ @public
+   CAMetalLayer *layer;
+   NSView *view;
++  // for a top-level window of another process (Chromium's GPU process draws into the browser process's window):
++  // a borderless panel of this process over that window's client area, kept just above the owner's Cocoa window
++  NSPanel *overlay;
++  NSTimer *timer;
++  CGWindowID anchor; // the owner's Cocoa window
++  struct WMTWindowPlacement placement;
+ }
+ @end
+ 
+ @implementation MullionMetalHost
+ @end
+ 
++// the panel passes every click and key through to the window under it, and never becomes active
++@interface MullionOverlayPanel : NSPanel
++@end
++
++@implementation MullionOverlayPanel
++- (BOOL)canBecomeKeyWindow {
++  return NO;
++}
++- (BOOL)canBecomeMainWindow {
++  return NO;
++}
++@end
++
++// the client area on the screen, in Cocoa coordinates (points, bottom-left origin). Wine puts the Windows desktop's
++// origin at the top-left of the primary screen
++static NSRect
++MullionScreenRect(struct WMTWindowPlacement placement) {
++  NSRect primary = NSScreen.screens.firstObject.frame;
++  CGFloat scale = placement.screen_width / primary.size.width;
++  return NSMakeRect(
++      placement.screen_x / scale, primary.size.height - (placement.screen_y + placement.height) / scale,
++      placement.width / scale, placement.height / scale
++  );
++}
++
++// the on-screen windows, front to back
++static NSArray *
++MullionWindowList(void) {
++  return [(NSArray *)CGWindowListCopyWindowInfo(
++      kCGWindowListOptionOnScreenOnly | kCGWindowListExcludeDesktopElements, kCGNullWindowID
++  ) autorelease];
++}
++
++// the frontmost normal window of another Wine process that holds `rect` (CoreGraphics coordinates): the Cocoa window
++// of the top-level window this process draws into
++static CGWindowID
++MullionFindAnchor(NSArray *windows, CGRect rect, CGRect *bounds) {
++  NSString *wine = NSRunningApplication.currentApplication.localizedName;
++  pid_t me = getpid();
++  CGPoint center = CGPointMake(CGRectGetMidX(rect), CGRectGetMidY(rect));
++  for (NSDictionary *info in windows) {
++    CGRect frame;
++    if ([info[(id)kCGWindowOwnerPID] intValue] == me || [info[(id)kCGWindowLayer] intValue] != 0 ||
++        ![info[(id)kCGWindowOwnerName] isEqual:wine] ||
++        !CGRectMakeWithDictionaryRepresentation((CFDictionaryRef)info[(id)kCGWindowBounds], &frame) ||
++        !CGRectContainsPoint(frame, center))
++      continue;
++    *bounds = frame;
++    return [info[(id)kCGWindowNumber] unsignedIntValue];
++  }
++  return 0;
++}
++
++static CGRect
++MullionCGRect(NSRect rect) {
++  NSRect primary = NSScreen.screens.firstObject.frame;
++  return CGRectMake(rect.origin.x, primary.size.height - NSMaxY(rect), rect.size.width, rect.size.height);
++}
++
++// the client area over the owner's Cocoa window `frame` (CoreGraphics coordinates), in Cocoa coordinates. as for a
++// view in this process's own window: what Wine draws around the client area is a border as wide below as beside it,
++// and the rest (caption, menu, a Cocoa title bar) above
++static NSRect
++MullionAreaOver(CGRect frame, struct WMTWindowPlacement placement) {
++  NSRect primary = NSScreen.screens.firstObject.frame;
++  CGFloat scale = placement.screen_width / primary.size.width;
++  CGFloat border = (frame.size.width - placement.top_level_width / scale) / 2;
++  CGFloat above = frame.size.height - placement.top_level_height / scale - border;
++  CGFloat top = frame.origin.y + above + placement.y / scale;
++  return NSMakeRect(
++      frame.origin.x + border + placement.x / scale, primary.size.height - top - placement.height / scale,
++      placement.width / scale, placement.height / scale
++  );
++}
++
++// puts the panel over the owner's window and above it, or hides it while that window is not on the screen. on the
++// main thread: from a placement, and from the host's timer (the owner's window moves and comes to the front without
++// this process presenting anything)
++static void
++MullionSyncOverlay(MullionMetalHost *host, BOOL placed) {
++  NSArray *windows = MullionWindowList();
++  CGRect bounds = CGRectZero;
++  NSInteger anchor_index = -1, overlay_index = -1, index = 0;
++
++  if (!(host->placement.flags & WMTWindowPlacementShown)) {
++    [host->overlay orderOut:nil];
++    return;
++  }
++  if (placed || !host->anchor)
++    host->anchor = MullionFindAnchor(windows, MullionCGRect(MullionScreenRect(host->placement)), &bounds);
++  for (NSDictionary *info in windows) {
++    CGWindowID number = [info[(id)kCGWindowNumber] unsignedIntValue];
++    if (number == host->anchor) {
++      anchor_index = index;
++      CGRectMakeWithDictionaryRepresentation((CFDictionaryRef)info[(id)kCGWindowBounds], &bounds);
++    } else if (number == (CGWindowID)host->overlay.windowNumber)
++      overlay_index = index;
++    index++;
++  }
++  if (anchor_index < 0) {
++    // the owner's window is hidden, minimized or gone
++    host->anchor = 0;
++    [host->overlay orderOut:nil];
++    return;
++  }
++  NSRect area = MullionAreaOver(bounds, host->placement);
++  if (!NSEqualRects(host->overlay.frame, area))
++    [host->overlay setFrame:area display:NO];
++  if (overlay_index != anchor_index - 1)
++    [host->overlay orderWindow:NSWindowAbove relativeTo:host->anchor];
++}
++
++static void
++MullionPlaceOverlay(MullionMetalHost *host, struct WMTWindowPlacement placement) {
++  host->placement = placement;
++  if (!host->overlay) {
++    NSRect area = MullionScreenRect(placement);
++    host->overlay = [[MullionOverlayPanel alloc]
++        initWithContentRect:area
++                  styleMask:NSWindowStyleMaskBorderless | NSWindowStyleMaskNonactivatingPanel
++                    backing:NSBackingStoreBuffered
++                      defer:NO];
++    host->overlay.ignoresMouseEvents = YES;
++    host->overlay.hasShadow = NO;
++    host->overlay.opaque = YES;
++    host->overlay.backgroundColor = NSColor.blackColor;
++    host->overlay.releasedWhenClosed = NO;
++    host->overlay.hidesOnDeactivate = NO;
++    host->overlay.floatingPanel = NO;
++    host->overlay.level = NSNormalWindowLevel;
++    host->overlay.collectionBehavior = NSWindowCollectionBehaviorManaged | NSWindowCollectionBehaviorIgnoresCycle;
++    host->view = [[MullionMetalView alloc] initWithFrame:NSMakeRect(0, 0, area.size.width, area.size.height)];
++    host->view.layer = host->layer;
++    host->view.wantsLayer = YES;
++    host->view.autoresizingMask = NSViewWidthSizable | NSViewHeightSizable;
++    host->overlay.contentView = host->view;
++    host->layer.contentsScale = host->overlay.backingScaleFactor;
++    host->timer = [[NSTimer scheduledTimerWithTimeInterval:0.1
++                                                   repeats:YES
++                                                     block:^(NSTimer *timer) {
++                                                       MullionSyncOverlay(host, NO);
++                                                     }] retain];
++  }
++  MullionSyncOverlay(host, YES);
++}
++
+ // puts a host's view over its window's client area, making it when it is not there yet. on the main thread
+ static void
+ MullionPlace(MullionMetalHost *host, struct WMTWindowPlacement placement) {
++  if (host->overlay) {
++    MullionPlaceOverlay(host, placement);
++    return;
++  }
+   for (NSWindow *window in [NSApp windows]) {
+     // a 32-bit program's handle is the low half of Wine's
+     if (![window respondsToSelector:@selector(hwnd)] ||
+@@ -2624,7 +2780,8 @@ MullionPlace(MullionMetalHost *host, struct WMTWindowPlacement placement) {
+     host->view.frame = area;
+     return;
+   }
+-  NSLog(@"winemetal: no window to present %#llx in", placement.top_level);
++  // the window belongs to another process
++  MullionPlaceOverlay(host, placement);
+ }
+ 
+ static NTSTATUS
+@@ -2712,6 +2869,11 @@ _ReleaseMetalView(void *obj) {
+   if ([(id)params->handle isKindOfClass:[MullionMetalHost class]]) {
+     MullionMetalHost *host = (MullionMetalHost *)params->handle;
+     dispatch_async(dispatch_get_main_queue(), ^{
++      [host->timer invalidate];
++      [host->timer release];
++      [host->overlay orderOut:nil];
++      [host->overlay close];
++      [host->overlay release];
+       [host->view removeFromSuperview];
+       [host->view release];
+       [host->layer release];
+diff --git a/src/winemetal/winemetal.h b/src/winemetal/winemetal.h
+index c7c88d9..3e77cb2 100644
+--- a/src/winemetal/winemetal.h
++++ b/src/winemetal/winemetal.h
+@@ -2070,6 +2070,14 @@ struct WMTWindowPlacement {
+   int32_t x, y, width, height;
+   int32_t top_level_width, top_level_height;
+   uint32_t screen_width;
++  // the client area's top-left on the Windows desktop, in pixels; for a top-level window of another process, whose
++  // Cocoa window this process does not have
++  int32_t screen_x, screen_y;
++  uint32_t flags; // WMTWindowPlacementShown
++};
++
++enum WMTWindowPlacementFlags : uint32_t {
++  WMTWindowPlacementShown = 1, // the top-level window is visible and not minimized
+ };
+ 
+ WINEMETAL_API obj_handle_t CreateMetalViewFromHWND(
+-- 
+2.54.0 (Apple Git-157)
+

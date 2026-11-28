@@ -17,14 +17,15 @@ Miro는 [Whisky](https://github.com/Whisky-App/Whisky)(© Whisky contributors, G
 
 Miro 1.1에는 Miro Metal Bridge, 곧 DXMT용으로 고친 Wine Mac 드라이버 `winemac.so`(LGPL-2.1 이상)가 들어 있었어요. 소스는 [Engine/miro-metal-bridge](Engine/miro-metal-bridge)와 1.1.0 릴리즈 첨부 파일에 있어요.
 
-### miroe 연구 엔진 (`Engine/miroe`, Miro 앱에는 아직 들어 있지 않음)
+### miroe 엔진 (`Engine/miroe`; 엔진은 Miro.app 밖, 엔진 폴더에 따로 설치)
 
 | 경로 | 출처와 라이선스 |
 | --- | --- |
 | `Engine/miroe/scripts` 일부 (`stage1.sh`, `stage2*.sh`, `build-wine.sh`) | [Hadron](https://github.com/Broyojo/hadron)의 스크립트를 가져오거나 고침. Copyright (c) 2026 David Andrews, BSD 3-Clause ([`LICENSE.hadron`](Engine/miroe/scripts/LICENSE.hadron)) |
 | `Engine/miroe/patches/dxmt` | [DXMT](https://github.com/3Shain/dxmt) 위의 패치, LGPL-2.1 이상. MUMA v2(`0003`)는 [DXVK](https://github.com/doitsujin/dxvk)(zlib, Copyright (c) 2017 Philip Rebohle 외)의 메모리 정책(유휴 한도, 예산, 한 번에 푸는 양)을 참고했어요. DXVK 코드를 복사하지 않았어요 |
-| `Engine/miroe/patches/mullion` | [Mullion](https://github.com/dttdrv/mullion)(DXMT 포크) 위의 패치, LGPL-2.1 이상. `0001`은 Hadron의 DXMT 패치를 그대로 쓴 거예요(Copyright (c) 2026 David Andrews, Hadron의 패치는 고치는 프로젝트의 라이선스를 따라요) |
-| `Engine/miroe/patches/wine-x86_64` | [Wine](https://www.winehq.org) 위의 패치, LGPL-2.1 이상 |
+| `Engine/miroe/patches/mullion` | [Mullion](https://github.com/dttdrv/mullion)(DXMT 포크) 위의 패치, LGPL-2.1 이상. `0001`은 Hadron의 DXMT 패치를 그대로 쓴 거예요(Copyright (c) 2026 David Andrews, Hadron의 패치는 고치는 프로젝트의 라이선스를 따라요). `0005`는 엔진에 들어 있는 Wine winemac.drv의 `CAContextSwapChain`(Wine 커밋 `1a63b0d7c4`, Marc-Aurel Zent, LGPL-2.1 이상)을 불러 써요. 코드는 복사하지 않았어요. 같은 방식(CAContext + CALayerHost)은 Chromium(BSD 3-Clause)이 macOS에서 쓰는 방식이고, Chromium 코드도 가져오지 않았어요 |
+| `Engine/miroe/patches/wine`, `Engine/miroe/patches/wine-x86_64` | [Wine](https://www.winehq.org) 위의 패치, LGPL-2.1 이상 |
+| 엔진의 `miro/fonts` (설치 스크립트가 넣음, 저장소에는 없음) | [Noto Sans CJK](https://github.com/notofonts/noto-cjk) KR Regular·Bold, Copyright 2014-2021 Adobe (http://www.adobe.com/), SIL Open Font License 1.1. 라이선스 전문은 엔진의 `miro/licenses/noto-cjk-OFL.txt`. Miro가 각 C: 드라이브의 `windows\Fonts`에 복제해요 |
 | `Engine/miroe/patches/experiments` | 비교용. DXMT #260 제보자가 글로 설명한 변경을 miroe가 구현한 것(코드 복사 없음), LGPL-2.1 이상 |
 | 나머지 (`Engine/miroe`의 문서·도구·스크립트, `Engine/tests`) | Miro와 같은 GPL-3.0 이상 |
 

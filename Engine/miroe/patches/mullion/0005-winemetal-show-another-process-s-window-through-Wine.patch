@@ -1,0 +1,215 @@
+From 35900cc84b1e4e1683dbd7529992d4d5f0f68ed4 Mon Sep 17 00:00:00 2001
+From: boartat <260228444+boartat@users.noreply.github.com>
+Date: Sat, 28 Nov 2026 18:41:42 +0900
+Subject: [PATCH] winemetal: show another process's window through Wine's
+ CALayerHost swapchain
+
+Chromium's GPU process draws into the browser process's windows. Patches 0003/0004 put a panel of the GPU process
+over such a window and moved it after the window 60 times a second, so while the window was dragged the panel
+trailed it by up to 5 points (442 of 1029 samples) and the window's edge showed: the flicker. Wine's winemac.drv
+has the macOS way to do this since commit 1a63b0d7c4 (Marc-Aurel Zent, "winemac: Implement cross-process
+MetalViewSwapChain via CALayerHost"), the one Chromium itself uses: the drawing process exports a layer tree
+through a CAContext and the window's process shows it inside that window with a CALayerHost, so the window server
+draws it as part of the window.
+
+The window's placement now says when its top-level window belongs to another process. For such a window, when
+winemac.drv has CAContextSwapChain, the layer goes into the root of that swapchain's exported tree at the client
+area (counted from the root's bottom-left, as layers are), the root is made clear (it is black, and a window may
+have more than one), and the panel is not made. The swapchain is made and released on the calling Wine thread: its
+init waits for the main thread and both post a message to the window. A Wine without the class keeps the panel.
+
+Such a layer shows its frames with their alpha, as DirectComposition does for Chromium on Windows: Chromium's first
+frame of a popup that opens is transparent black, which an opaque layer showed as a black flash for two frames.
+
+Measured on Steam: no window of the GPU process at all, 0 of 1041 samples off while the window moved; menus,
+the store and library views, resize and minimize/restore draw in place; six menu openings recorded with no
+white or black frame (with Wine patch 0002); nothing of the store or library shows through.
+
+Written with AI assistance.
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+---
+ src/mullion/mullion_window.hpp      |  5 +-
+ src/winemetal/unix/winemetal_unix.c | 89 ++++++++++++++++++++++++++++-
+ src/winemetal/winemetal.h           |  1 +
+ 3 files changed, 92 insertions(+), 3 deletions(-)
+
+diff --git a/src/mullion/mullion_window.hpp b/src/mullion/mullion_window.hpp
+index f4e1f3d..6a3e942 100644
+--- a/src/mullion/mullion_window.hpp
++++ b/src/mullion/mullion_window.hpp
+@@ -18,10 +18,13 @@ windowPlacement(HWND hWindow) {
+   GetClientRect(top_level, &around);
+   ClientToScreen(hWindow, &origin);
+   MapWindowPoints(hWindow, top_level, reinterpret_cast<POINT *>(&client), 2);
++  DWORD owner = 0;
++  GetWindowThreadProcessId(top_level, &owner);
+   WMTWindowPlacement placement{
+       (uint64_t)(uintptr_t)top_level, client.left, client.top, client.right - client.left, client.bottom - client.top,
+       around.right, around.bottom, (uint32_t)GetSystemMetrics(SM_CXSCREEN), origin.x, origin.y,
+-      IsWindowVisible(top_level) && !IsIconic(top_level) ? WMTWindowPlacementShown : 0u
++      (IsWindowVisible(top_level) && !IsIconic(top_level) ? WMTWindowPlacementShown : 0u) |
++          (owner && owner != GetCurrentProcessId() ? WMTWindowPlacementOtherProcess : 0u)
+   };
+   SetThreadDpiAwarenessContext(awareness);
+   return placement;
+diff --git a/src/winemetal/unix/winemetal_unix.c b/src/winemetal/unix/winemetal_unix.c
+index e9cf686..8c7ed96 100644
+--- a/src/winemetal/unix/winemetal_unix.c
++++ b/src/winemetal/unix/winemetal_unix.c
+@@ -2503,13 +2503,19 @@ _MTLDevice_temporalScalerSupport(void *obj) {
+   return STATUS_SUCCESS;
+ }
+ 
++// set on the layer of a window of another process (MullionHostRemotely)
++static char mullion_remote_layer;
++
+ static NTSTATUS
+ _MetalLayer_setProps(void *obj) {
+   struct unixcall_generic_obj_constptr_noret *params = obj;
+   CAMetalLayer *layer = (CAMetalLayer *)params->handle;
+   const struct WMTLayerProps *props = params->arg.ptr;
++  // a window of another process shows its frames with their alpha, as DirectComposition does for Chromium on
++  // Windows: Chromium's first frame of a popup that opens is transparent, and opaque it was a black flash
++  BOOL opaque = props->opaque && !objc_getAssociatedObject(layer, &mullion_remote_layer);
+   // a present sets them all each frame, and each setting waits for the main thread: only a change is set
+-  if (layer.device == (id<MTLDevice>)props->device && layer.opaque == props->opaque &&
++  if (layer.device == (id<MTLDevice>)props->device && layer.opaque == opaque &&
+       layer.framebufferOnly == props->framebuffer_only && layer.contentsScale == props->contents_scale &&
+       layer.displaySyncEnabled == props->display_sync_enabled &&
+       CGSizeEqualToSize(layer.drawableSize, CGSizeMake(props->drawable_width, props->drawable_height)) &&
+@@ -2517,7 +2523,7 @@ _MetalLayer_setProps(void *obj) {
+     return STATUS_SUCCESS;
+   execute_on_main(^{
+     layer.device = (id<MTLDevice>)props->device;
+-    layer.opaque = props->opaque;
++    layer.opaque = opaque;
+     layer.framebufferOnly = props->framebuffer_only;
+     layer.contentsScale = props->contents_scale;
+     layer.displaySyncEnabled = props->display_sync_enabled;
+@@ -2593,6 +2599,10 @@ struct macdrv_functions_t {
+   NSPanel *overlay;
+   CGWindowID anchor;
+   NSArray *holes; // where windows without a panel show through (view coordinates) // the owner's Cocoa window
++  // or, where Wine can do it (winemac.drv's CAContextSwapChain): the layer inside a layer tree this process exports,
++  // which the window's own process shows inside that window
++  id remote;
++  CALayer *root;
+   struct WMTWindowPlacement placement;
+ }
+ @end
+@@ -2875,9 +2885,72 @@ MullionPlaceOverlay(MullionMetalHost *host, struct WMTWindowPlacement placement)
+   MullionSyncOverlays(host);
+ }
+ 
++// A top-level window of another process (Chromium's GPU process draws into the browser process's windows), the way
++// Chromium itself does it on macOS and winemac.drv does it for Vulkan and OpenGL (Wine commit 1a63b0d7c4, "winemac:
++// Implement cross-process MetalViewSwapChain via CALayerHost"): this process exports a layer tree through a CAContext,
++// and the window's process shows it with a CALayerHost inside that window. The window server draws it as part of the
++// window, so it moves, stacks, hides and takes clicks with the window, with nothing to keep in step from here.
++// winemac.drv's CAContextSwapChain does the exporting and asks the window's process to host it (a posted message);
++// the tree's root is its layer, the size of the top-level window's client area, and ours goes into it where the
++// window's client area is (a child window's swapchain: Steam's store view sits below its tabs)
++
++// where the layer goes in the root, in points (Wine's pixels over the root's contentsScale, as winemac.drv counts)
++static void
++MullionRemoteFrame(MullionMetalHost *host, struct WMTWindowPlacement placement) {
++  CGFloat scale = host->root.contentsScale > 0 ? host->root.contentsScale : 1;
++  CGFloat height = placement.top_level_height / scale;
++  host->placement = placement;
++  host->root.bounds = CGRectMake(0, 0, placement.top_level_width / scale, height);
++  // the root's sublayers count from its bottom-left, as layers do (Steam's store view, a child window below the
++  // tabs, came out as far from the top as it should be from the bottom when counted from the top-left)
++  host->layer.frame = CGRectMake(
++      placement.x / scale, height - (placement.y + placement.height) / scale, placement.width / scale,
++      placement.height / scale
++  );
++}
++
++// on a Wine thread, not the main thread: CAContextSwapChain waits for the main thread, and posts a message
++static BOOL
++MullionHostRemotely(MullionMetalHost *host, struct WMTWindowPlacement placement) {
++  Class swapchain = objc_getClass("CAContextSwapChain");
++  SEL init = sel_registerName("initWithHwnd:bounds:");
++  if (!swapchain || !class_respondsToSelector(swapchain, init) || !class_respondsToSelector(swapchain, @selector(layer)))
++    return NO;
++  CGRect bounds = CGRectMake(0, 0, placement.top_level_width, placement.top_level_height);
++  id remote = ((id(*)(id, SEL, void *, CGRect))objc_msgSend)(
++      [swapchain alloc], init, (void *)(uintptr_t)placement.top_level, bounds
++  );
++  if (!remote)
++    return NO;
++  host->remote = remote;
++  host->root = [((CALayer * (*)(id, SEL)) objc_msgSend)(remote, @selector(layer)) retain];
++  [CATransaction begin];
++  [CATransaction setDisableActions:YES];
++  // winemac.drv's root is black: here it is only a frame, and a window can have more than one (Chromium keeps a
++  // swapchain of a 0x0 client area next to the real one)
++  host->root.backgroundColor = NULL;
++  host->root.opaque = NO;
++  host->layer.anchorPoint = CGPointZero;
++  host->layer.contentsScale = host->root.contentsScale;
++  host->layer.opaque = NO;
++  objc_setAssociatedObject(host->layer, &mullion_remote_layer, @YES, OBJC_ASSOCIATION_RETAIN);
++  [host->root addSublayer:host->layer];
++  MullionRemoteFrame(host, placement);
++  [CATransaction commit];
++  [CATransaction flush];
++  return YES;
++}
++
+ // puts a host's view over its window's client area, making it when it is not there yet. on the main thread
+ static void
+ MullionPlace(MullionMetalHost *host, struct WMTWindowPlacement placement) {
++  if (host->root) {
++    [CATransaction begin];
++    [CATransaction setDisableActions:YES];
++    MullionRemoteFrame(host, placement);
++    [CATransaction commit];
++    return;
++  }
+   if (host->overlay) {
+     MullionPlaceOverlay(host, placement);
+     return;
+@@ -2958,6 +3031,8 @@ _CreateMetalViewFromHWND(void *obj) {
+     params->ret_view = (obj_handle_t)host;
+     params->ret_layer = (obj_handle_t)host->layer;
+     struct WMTWindowPlacement placement = params->placement;
++    if ((placement.flags & WMTWindowPlacementOtherProcess) && MullionHostRemotely(host, placement))
++      return STATUS_SUCCESS;
+     dispatch_async(dispatch_get_main_queue(), ^{
+       MullionPlace(host, placement);
+     });
+@@ -2997,7 +3072,17 @@ _ReleaseMetalView(void *obj) {
+ 
+   if ([(id)params->handle isKindOfClass:[MullionMetalHost class]]) {
+     MullionMetalHost *host = (MullionMetalHost *)params->handle;
++    // the window's process is told to drop its CALayerHost by a message posted from here (a Wine thread)
++    [host->remote release];
++    host->remote = nil;
+     dispatch_async(dispatch_get_main_queue(), ^{
++      if (host->root) {
++        [CATransaction begin];
++        [CATransaction setDisableActions:YES];
++        [host->layer removeFromSuperlayer];
++        [CATransaction commit];
++        [host->root release];
++      }
+       if (host->overlay) {
+         [mullion_overlays removeObject:host];
+         if (!mullion_overlays.count) {
+diff --git a/src/winemetal/winemetal.h b/src/winemetal/winemetal.h
+index 3e77cb2..214f739 100644
+--- a/src/winemetal/winemetal.h
++++ b/src/winemetal/winemetal.h
+@@ -2078,6 +2078,7 @@ struct WMTWindowPlacement {
+ 
+ enum WMTWindowPlacementFlags : uint32_t {
+   WMTWindowPlacementShown = 1, // the top-level window is visible and not minimized
++  WMTWindowPlacementOtherProcess = 2, // the top-level window belongs to another process
+ };
+ 
+ WINEMETAL_API obj_handle_t CreateMetalViewFromHWND(
+-- 
+2.54.0 (Apple Git-157)
+

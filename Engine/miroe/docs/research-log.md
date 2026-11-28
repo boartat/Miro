@@ -285,6 +285,7 @@ DXMT의 셰이더 변환기(airconv, LLVM 15)와 Metal 파이프라인 컴파일
    - Homebrew: `cmake`, `ninja`, `meson`, `pkg-config`
    - llvm-mingw(약 119MB)
    - 소스: Wine, FEX(+서브모듈), DXMT, LLVM 15(DXMT의 셰이더 변환기용), Hadron·MetalSharp 패치
-2. ~~**기준 엔진**~~ 끝. Hadron 기준 ARM64 Wine 11.22 + FEX + DXMT를 빌드했어요. Apple Developer 계정이 없어서 4GB 아래 메모리를 못 쓰니, 지금은 64비트만 도는 dev 엔진이에요. 32비트(#161)에는 계정이나 Hadron 공식 릴리즈의 서명된 로더가 필요해요.
+2. ~~**기준 엔진**~~ 끝. Hadron 기준 ARM64 Wine 11.22 + FEX + DXMT를 빌드했어요(64비트만 도는 dev 엔진). 개발자 계정이 생긴 뒤 upstream ARM64 Wine을 서명해서 32비트·x86_64 실행까지 확인했어요([기반 검토 7절](base.md)).
 3. ~~**1순위 연구 시작**~~ MUMA v0 결과는 위에 있어요. 다음은 MUMA v1이에요.
 4. MetalSharp의 Wine 패치 중 Hadron에 없는 것을 비교해서 더해요.
+5. (2026-11-28) HTTPS·Vulkan이 되는 엔진(miroe-2)을 Miro에 넣었어요. Steam 검은 화면은 Mullion 패치 0003으로 풀었어요(다른 프로세스 창에 그리기). 남은 단일 엔진 조건: Steam 입력 확인 후 Steam을 miroe로 옮기기, D3D8·9 백엔드(DXVK가 MoltenVK에서 거절됨), Developer ID 서명. 자세한 측정은 [기반 검토 8절](base.md)이에요.
